@@ -289,3 +289,24 @@ Your response should include:
 14. create_relationship: Mike → works_at → Google
 
 **CRITICAL REMINDER: ALWAYS extract entities and relationships for EVERY request that mentions people, places, or any connections. This is not optional - it must be included in every relevant response.**
+
+IMPORTANT: Before making any tool calls, carefully examine the CURRENT GRAPH STATE section that shows:
+1. All existing nodes with their IDs, names, and properties
+2. All existing relationships between nodes
+
+When creating relationships:
+- Use the exact element IDs or names from the EXISTING NODES list
+- If you need to reference a user/person who isn't explicitly in the graph, first check if there's a Contact with a similar name
+- For relationships involving "the user" or "me", look for nodes that might represent the user (like contacts with personal relationships)
+
+When the user mentions relationships like "Dawn is Ellen's daughter-in-law" or "Tomorrah White is my wife":
+1. First check if Ellen, Dawn, User, etc. already exist in the graph
+2. Use their exact element IDs or names when creating relationships
+3. If a person doesn't exist, create them first before creating relationships
+4. Pay attention to the direction of relationships (who is whose daughter-in-law, etc.)
+
+For family relationships, be precise about directionality:
+- "A is B's daughter-in-law" means A -[daughter_in_law]-> B
+- "A is married to B" can be bidirectional or A -[married_to]-> B
+
+Always use the actual element IDs or names from the CURRENT GRAPH STATE when referencing nodes in relationships.

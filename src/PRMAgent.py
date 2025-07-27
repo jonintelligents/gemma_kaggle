@@ -53,15 +53,85 @@ def setup_prompt_manager(prompts_dir: str = "./prompts"):
         return None, None
 
 # --- Call Gemini and parse response ---
+def get_graph_context(tool_manager):
+    """Get current graph state to provide context to the LLM."""
+    try:
+        # Get all nodes with their IDs and properties
+        nodes_query = """
+        MATCH (n)
+        RETURN elementId(n) as element_id, 
+               labels(n) as labels, 
+               properties(n) as properties
+        """
+        nodes_result = tool_manager.execute_tool("query_graph", {"cypher_query": nodes_query})
+        nodes = json.loads(nodes_result) if nodes_result != "[]" else []
+        
+        # Get all relationships
+        relationships_query = """
+        MATCH (a)-[r]->(b)
+        RETURN elementId(a) as from_element_id,
+               properties(a) as from_properties,
+               labels(a) as from_labels,
+               type(r) as relationship_type,
+               properties(r) as rel_properties,
+               elementId(b) as to_element_id,
+               properties(b) as to_properties,
+               labels(b) as to_labels
+        """
+        relationships_result = tool_manager.execute_tool("query_graph", {"cypher_query": relationships_query})
+        relationships = json.loads(relationships_result) if relationships_result != "[]" else []
+        
+        # Format for LLM context
+        context = "=== CURRENT GRAPH STATE ===\n"
+        
+        if nodes:
+            context += "EXISTING NODES:\n"
+            for node in nodes:
+                element_id = node.get('element_id', 'unknown')
+                labels = node.get('labels', [])
+                props = node.get('properties', {})
+                name = props.get('name', props.get('id', 'unnamed'))
+                label_str = f"({','.join(labels)})" if labels else ""
+                context += f"  - ID: {element_id}, Name: '{name}' {label_str}\n"
+                if props:
+                    context += f"    Properties: {props}\n"
+        else:
+            context += "EXISTING NODES: None\n"
+        
+        if relationships:
+            context += "\nEXISTING RELATIONSHIPS:\n"
+            for rel in relationships:
+                from_name = rel.get('from_properties', {}).get('name', 'unnamed')
+                to_name = rel.get('to_properties', {}).get('name', 'unnamed')
+                rel_type = rel.get('relationship_type', 'unknown')
+                context += f"  - '{from_name}' -{rel_type}-> '{to_name}'\n"
+        else:
+            context += "\nEXISTING RELATIONSHIPS: None\n"
+        
+        context += "=== END GRAPH STATE ===\n\n"
+        return context
+        
+    except Exception as e:
+        logging.error(f"Error getting graph context: {e}")
+        return "=== ERROR: Could not retrieve graph context ===\n\n"
+
 def call_gemini_llm(user_query: str, chat_history: list, client, system_prompt: str = None, tool_manager=None):
     logging.info(f"Calling Gemini LLM with query: '{user_query}'")
+    
+    # Get current graph context
+    graph_context = get_graph_context(tool_manager) if tool_manager else ""
 
     try:
         if system_prompt:
-            full_context = system_prompt + "\n\nConversation history:\n"
+            full_context = system_prompt + "\n\n"
         else:
-            full_context = "Conversation history:\n"
-
+            full_context = ""
+        
+        # Add graph context
+        full_context += graph_context
+        
+        # Add conversation history
+        full_context += "Conversation history:\n"
         for message in chat_history:
             role = message["role"]
             content = message["content"]
