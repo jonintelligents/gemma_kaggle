@@ -1,5 +1,6 @@
 import os
 import re
+import string
 from typing import Dict, List, Set
 
 class PromptManager:
@@ -48,7 +49,7 @@ class PromptManager:
     
     def _extract_template_vars(self, template: str) -> Set[str]:
         """
-        Extract variable names from f-string style template.
+        Extract variable names from f-string style template using Python's string.Formatter.
         
         Args:
             template (str): Template string with {variable} placeholders
@@ -56,17 +57,46 @@ class PromptManager:
         Returns:
             Set[str]: Set of variable names found in the template
         """
-        # Find all {variable} patterns, excluding {{ and }} (literal braces)
-        pattern = r'\{([^{}]+)\}'
+        variables = set()
+        formatter = string.Formatter()
+        
+        try:
+            # Use Python's built-in formatter to parse the template
+            for literal_text, field_name, format_spec, conversion in formatter.parse(template):
+                if field_name is not None:
+                    # Handle simple field names and attribute access
+                    # Split on '.' and '[' to get the base variable name
+                    base_name = field_name.split('.')[0].split('[')[0]
+                    # Only accept valid Python identifiers (excludes quoted strings)
+                    if base_name and base_name.isidentifier():
+                        variables.add(base_name)
+        except ValueError as e:
+            # If parsing fails, fall back to regex method
+            print(f"Warning: Formatter parsing failed, using regex fallback: {e}")
+            variables = self._extract_template_vars_regex(template)
+        
+        return variables
+    
+    def _extract_template_vars_regex(self, template: str) -> Set[str]:
+        """
+        Fallback regex-based variable extraction.
+        
+        Args:
+            template (str): Template string with {variable} placeholders
+            
+        Returns:
+            Set[str]: Set of variable names found in the template
+        """
+        # Pattern to find {variable} but exclude JSON-like structures
+        # This looks for single words/identifiers, not quoted strings or complex expressions
+        pattern = r'(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})'
         matches = re.findall(pattern, template)
         
         variables = set()
         for match in matches:
-            # Handle simple variable names (no complex expressions)
-            var_name = match.strip()
-            # Only accept simple variable names (letters, numbers, underscores)
-            if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', var_name):
-                variables.add(var_name)
+            # Only accept simple Python identifiers
+            if match.isidentifier():
+                variables.add(match)
         
         return variables
     
@@ -100,11 +130,7 @@ class PromptManager:
         if required_vars and not variables:
             raise ValueError(f"Prompt '{name}' requires variables: {sorted(required_vars)}")
         
-        # If no variables needed but some provided
-        if not required_vars and variables:
-            raise ValueError(f"Prompt '{name}' doesn't accept variables, but got: {sorted(variables.keys())}")
-        
-        # Validate provided variables
+        # More lenient approach - warn about extra variables but don't fail
         if variables:
             provided_vars = set(variables.keys())
             missing_vars = required_vars - provided_vars
@@ -114,15 +140,45 @@ class PromptManager:
                 raise ValueError(f"Missing required variables for prompt '{name}': {sorted(missing_vars)}")
             
             if extra_vars:
-                raise ValueError(f"Extra variables provided for prompt '{name}': {sorted(extra_vars)}")
+                print(f"Warning: Extra variables provided for prompt '{name}': {sorted(extra_vars)}")
         
-        # Substitute variables using format()
+        # Substitute variables using format() with error handling
         try:
-            return template.format(**variables)
+            # Use safe_substitute approach for partial substitution
+            return self._safe_format(template, variables or {})
         except KeyError as e:
-            raise ValueError(f"Template substitution failed for prompt '{name}': {e}")
+            raise ValueError(f"Template substitution failed for prompt '{name}': missing variable {e}")
         except Exception as e:
             raise ValueError(f"Error formatting prompt '{name}': {e}")
+    
+    def _safe_format(self, template: str, variables: Dict[str, str]) -> str:
+        """
+        Safely format template with partial variable substitution support.
+        
+        Args:
+            template (str): Template string
+            variables (Dict[str, str]): Variables to substitute
+            
+        Returns:
+            str: Formatted string
+        """
+        try:
+            # First try normal format
+            return template.format(**variables)
+        except KeyError:
+            # If that fails, try with string.Template for partial substitution
+            try:
+                from string import Template
+                # Convert {var} to $var for Template
+                template_style = re.sub(r'\{(\w+)\}', r'$\1', template)
+                template_obj = Template(template_style)
+                return template_obj.safe_substitute(**variables)
+            except:
+                # Final fallback - manual replacement
+                result = template
+                for key, value in variables.items():
+                    result = result.replace(f'{{{key}}}', str(value))
+                return result
     
     def get_prompt_variables(self, name: str) -> List[str]:
         """
@@ -183,6 +239,29 @@ class PromptManager:
         
         return self.prompts[name]
     
+    def debug_template(self, name: str) -> Dict:
+        """
+        Debug information for a specific template.
+        
+        Args:
+            name (str): Name of the prompt
+            
+        Returns:
+            Dict: Debug information including raw content and detected variables
+        """
+        if name not in self.prompts:
+            raise KeyError(f"Prompt '{name}' not found")
+            
+        template = self.prompts[name]
+        return {
+            'name': name,
+            'length': len(template),
+            'variables_detected': sorted(self._template_vars[name]),
+            'variable_count': len(self._template_vars[name]),
+            'contains_double_braces': '{{' in template or '}}' in template,
+            'raw_preview': template[:200] + ('...' if len(template) > 200 else '')
+        }
+    
     def reload(self) -> None:
         """Reload all prompts from the directory."""
         self.load_prompts()
@@ -194,6 +273,3 @@ class PromptManager:
     def __len__(self) -> int:
         """Return the number of loaded prompts."""
         return len(self.prompts)
-
-
-# Note: For comprehensive testing and examples, see PromptManagerTests.py

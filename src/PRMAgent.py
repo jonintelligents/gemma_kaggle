@@ -2,7 +2,7 @@ import json
 import os
 from google import genai
 from PromptManager import PromptManager
-from ToolManager import Neo4jToolManager
+from ToolManager import ExamplePersonToolManager
 import logging
 
 # Configure logging
@@ -13,24 +13,24 @@ NEO4J_URI = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
 NEO4J_USER = os.getenv('NEO4J_USER', 'neo4j')
 NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD', 'password')
 
-def init_neo4j():
-    """
-    Initialize Neo4j connection and verify it's working.
-    The Neo4jToolManager handles constraint creation automatically.
-    """
-    logging.info(f"Initializing Neo4j connection to: {NEO4J_URI}")
-    try:
-        # Create tool manager - this will test the connection and create constraints
-        tool_manager = Neo4jToolManager(
-            uri=NEO4J_URI,
-            user=NEO4J_USER,
-            password=NEO4J_PASSWORD
-        )
-        logging.info("Neo4j database initialized successfully.")
-        return tool_manager
-    except Exception as e:
-        logging.error(f"Failed to initialize Neo4j: {e}")
-        raise
+# def init_neo4j():
+#     """
+#     Initialize Neo4j connection and verify it's working.
+#     The Neo4jToolManager handles constraint creation automatically.
+#     """
+#     logging.info(f"Initializing Neo4j connection to: {NEO4J_URI}")
+#     try:
+#         # Create tool manager - this will test the connection and create constraints
+#         tool_manager = Neo4jToolManager(
+#             uri=NEO4J_URI,
+#             user=NEO4J_USER,
+#             password=NEO4J_PASSWORD
+#         )
+#         logging.info("Neo4j database initialized successfully.")
+#         return tool_manager
+#     except Exception as e:
+#         logging.error(f"Failed to initialize Neo4j: {e}")
+#         raise
 
 # --- Gemini API Setup ---
 def setup_gemini_api():
@@ -46,11 +46,9 @@ def setup_prompt_manager(prompts_dir: str = "./prompts"):
     try:
         pm = PromptManager(prompts_dir)
         if pm.has_prompt("system"):
-            return pm, pm.get_prompt("system")
-        else:
-            return pm, None
+            return pm
     except Exception:
-        return None, None
+        return None
 
 # --- Call Gemini and parse response ---
 def get_graph_context(tool_manager):
@@ -309,8 +307,10 @@ def main():
     
     # Initialize Neo4j
     try:
-        tool_manager = init_neo4j()
-        print(f"✅ Neo4j ToolManager initialized with tools: {', '.join(tool_manager.get_available_tools())}")
+        #tool_manager = init_neo4j()
+        tool_manager = ExamplePersonToolManager()
+        
+        print(f"✅ ToolManager initialized with tools: {', '.join(tool_manager.get_available_tools())}")
     except Exception as e:
         print(f"❌ Failed to initialize Neo4j: {e}")
         print("Make sure Neo4j is running and credentials are correct.")
@@ -326,12 +326,8 @@ def main():
         return
 
     # Setup prompt manager
-    prompt_manager, system_prompt = setup_prompt_manager()
-    if system_prompt:
-        print("✅ Using custom system prompt.")
-    else:
-        print("⚠️ No system prompt loaded - using default behavior.")
-
+    prompt_manager = setup_prompt_manager()
+    system_prompt = prompt_manager.get_prompt("system", {"tool_function_descriptions" : tool_manager.get_available_tools()})
     chat_history = []
 
     print("""
