@@ -1,5 +1,7 @@
 from AbstractToolManager import AbstractPersonToolManager
 from typing import Any, Dict
+from SVO import SVO
+import pprint
 
 class ExamplePersonToolManager(AbstractPersonToolManager):
     """
@@ -11,6 +13,7 @@ class ExamplePersonToolManager(AbstractPersonToolManager):
         super().__init__()
         # Example in-memory storage for demonstration
         self.people_data = {}
+        self.extractor = SVO()
     
     def add_person(self, name: str, summary: str = None, properties: Dict[str, Any] = None) -> str:
         props_str = f" with properties: {properties}" if properties else ""
@@ -31,6 +34,9 @@ class ExamplePersonToolManager(AbstractPersonToolManager):
         return f"Deleted person - {identifier}"
     
     def add_person_fact(self, person_id: str, fact_text: str, fact_type: str = "general") -> str:
+        output = self.extractor.extract(str)
+        pprint.pprint(output)
+
         return f"Added {fact_type} fact to person '{person_id}': {fact_text}"
     
     def delete_person_fact(self, person_id: str, fact_number: int) -> str:

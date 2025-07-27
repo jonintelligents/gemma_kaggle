@@ -185,36 +185,6 @@ class AbstractPersonToolManager(ABC):
         [Calls add_person with name="John Smith", summary="Software engineer at Google"]
         ```
         
-        ### Complex Relationship Example - Step 1
-        ```
-        User: "Add my sister Sarah who goes to UCLA and her birthday is March 15th"
-        Process:
-        1. add_person for Sarah  # <-- This method
-        2. add_person_fact for Sarah with fact "sister"
-        3. add_person_fact for Sarah with fact "attends UCLA"
-        4. add_person_fact for Sarah with fact "birthday: March 15th"
-        ```
-        
-        ### Multiple People Processing
-        ```
-        User: "Add my friend Jessica from college who lives in Seattle, and my neighbor Tom who has two kids and loves gardening"
-        Process:
-        1. add_person for Jessica  # <-- This method
-        2. add_person_fact for Jessica with fact "friend"
-        3. add_person_fact for Jessica with fact "from college"
-        4. add_person_fact for Jessica with fact "lives in Seattle"
-        5. add_person for Tom  # <-- This method again
-        6. add_person_fact for Tom with fact "neighbor"
-        7. add_person_fact for Tom with fact "has two kids"
-        8. add_person_fact for Tom with fact "loves gardening"
-        ```
-        
-        ## Information Extraction Patterns
-        When users mention people, ALWAYS extract:
-        - **Family Relationships**: "my mom Ellen" → create person "Ellen"
-        - **Professional Relationships**: "my boss Janet" → create person "Janet"  
-        - **Social Relationships**: "my friend Alex" → create person "Alex"
-        
         ## Important Notes
         - **UPSERT Behavior**: Adding a person with an existing name will update that person
         - **Unique Names**: Each person is identified by their name as a unique key
