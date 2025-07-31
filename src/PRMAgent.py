@@ -3,6 +3,7 @@ import os
 import argparse
 from google import genai
 from ToolManager import ExamplePersonToolManager
+from GraphPersonManager import GraphPersonManager
 import logging
 
 # Configure logging
@@ -195,7 +196,8 @@ def main():
     
     # Initialize tool manager
     try:
-        tool_manager = ExamplePersonToolManager()
+        #tool_manager = ExamplePersonToolManager()
+        tool_manager = GraphPersonManager()
         print(f"✅ ToolManager initialized with tools: {', '.join(tool_manager.get_available_tools())}")
     except Exception as e:
         print(f"❌ Failed to initialize tool manager: {e}")
