@@ -178,21 +178,42 @@ class GraphPersonManager(AbstractPersonToolManager):
         return flattened
     
     def get_all_people(self, include_relationships: bool = True) -> str:
-        """Retrieve all people from the graph."""
+        """Retrieve all people from the graph with their complete information."""
         with self.driver.session() as session:
             if include_relationships:
                 query = """
                 MATCH (p:Person)
-                OPTIONAL MATCH (p)-[r]->(connected)
-                RETURN p.name as name, 
-                       p.summary as summary,
-                       collect(DISTINCT {type: type(r), node: labels(connected)[0], name: connected.name}) as relationships
+                OPTIONAL MATCH (p)-[:HAS_FACT]->(f:Fact)
+                OPTIONAL MATCH (p)-[:CONNECTED_TO]->(e:Entity)
+                OPTIONAL MATCH (p)-[:RELATED_TO]->(other:Person)
+                WITH p, 
+                    collect(DISTINCT {
+                        id: f.id, 
+                        text: f.text, 
+                        type: f.type, 
+                        created_at: f.created_at
+                    }) as facts,
+                    collect(DISTINCT {
+                        name: e.name, 
+                        type: e.type, 
+                        created_at: e.created_at
+                    }) as entities,
+                    collect(DISTINCT {
+                        name: other.name, 
+                        relationship_type: 'RELATED_TO'
+                    }) as related_people
+                RETURN p.name as name,
+                    properties(p) as person_properties,
+                    facts,
+                    entities,
+                    related_people
                 ORDER BY p.name
                 """
             else:
                 query = """
                 MATCH (p:Person)
-                RETURN p.name as name, p.summary as summary
+                RETURN p.name as name,
+                    properties(p) as person_properties
                 ORDER BY p.name
                 """
             
@@ -200,18 +221,51 @@ class GraphPersonManager(AbstractPersonToolManager):
             people = []
             
             for record in result:
+                # Get all person properties
+                person_properties = dict(record['person_properties'])
+                
                 person_info = {
                     'name': record['name'],
-                    'summary': record.get('summary', '')
+                    'properties': person_properties
                 }
                 
-                if include_relationships and 'relationships' in record:
-                    person_info['relationships'] = [rel for rel in record['relationships'] if rel['name']]
+                if include_relationships:
+                    # Filter out empty facts and include all fact details
+                    # Note: Need to filter out facts where text is None (empty OPTIONAL MATCH results)
+                    raw_facts = record.get('facts', [])
+                    facts = [f for f in raw_facts if f.get('text') is not None and f.get('id') is not None]
+                    person_info['facts'] = facts
+                    
+                    # Filter out empty entities and include all entity details
+                    raw_entities = record.get('entities', [])
+                    entities = [e for e in raw_entities if e.get('name') is not None]
+                    person_info['entities'] = entities
+                    
+                    # Filter out empty related people
+                    raw_related = record.get('related_people', [])
+                    related_people = [r for r in raw_related if r.get('name') is not None]
+                    person_info['related_people'] = related_people
+                    
+                    # Add summary counts for quick reference
+                    person_info['summary_counts'] = {
+                        'total_facts': len(facts),
+                        'total_entities': len(entities),
+                        'total_connections': len(related_people)
+                    }
                 
                 people.append(person_info)
             
             if people:
-                return f"Retrieved {len(people)} people: {json.dumps(people, indent=2)}"
+                if include_relationships:
+                    total_facts = sum(person.get('summary_counts', {}).get('total_facts', 0) for person in people)
+                    total_entities = sum(person.get('summary_counts', {}).get('total_entities', 0) for person in people)
+                    total_connections = sum(person.get('summary_counts', {}).get('total_connections', 0) for person in people)
+                    
+                    summary = f"Retrieved {len(people)} people with {total_facts} total facts, {total_entities} total entities, and {total_connections} total connections."
+                else:
+                    summary = f"Retrieved {len(people)} people."
+                
+                return f"{summary}\n\nPeople data: {json.dumps(people, indent=2, default=str)}"
             else:
                 return "No people found in the database"
     
@@ -665,9 +719,143 @@ class GraphPersonManager(AbstractPersonToolManager):
             
             if record:
                 return f"""Graph Statistics:
-- People: {record['person_count']}
-- Facts: {record['fact_count']}
-- Entities: {record['entity_count']}
-- Inter-person connections: {record['connected_people_count']}"""
+    - People: {record['person_count']}
+    - Facts: {record['fact_count']}
+    - Entities: {record['entity_count']}
+    - Inter-person connections: {record['connected_people_count']}"""
             else:
                 return "No statistics available"
+
+
+    def get_people_facts_simple(self) -> str:
+        """Retrieve all people with just their names and fact texts in a simplified format."""
+        with self.driver.session() as session:
+            query = """
+            MATCH (p:Person)
+            OPTIONAL MATCH (p)-[:HAS_FACT]->(f:Fact)
+            WITH p, collect(f.text) as fact_texts
+            RETURN p.name as name, fact_texts
+            ORDER BY p.name
+            """
+            
+            result = session.run(query)
+            people_facts = {}
+            
+            for record in result:
+                name = record['name']
+                fact_texts = record['fact_texts']
+                
+                # Filter out None values (from people with no facts)
+                filtered_facts = [fact for fact in fact_texts if fact is not None]
+                
+                people_facts[name] = filtered_facts
+            
+            if people_facts:
+                total_people = len(people_facts)
+                total_facts = sum(len(facts) for facts in people_facts.values())
+                summary = f"Retrieved {total_people} people with {total_facts} total facts."
+                
+                return f"{summary}\n\nPeople facts: {json.dumps(people_facts, indent=2, ensure_ascii=False)}"
+            else:
+                return "No people found in the database"
+
+    # Alternative version that processes the existing get_all_people output
+    def extract_people_facts_from_full_data(self) -> str:
+        """Extract simplified people facts from the full get_all_people data."""
+        # Get the full data first
+        full_data_result = self.get_all_people(include_relationships=True)
+        
+        try:
+            # Extract JSON part from the result string
+            json_start = full_data_result.find('People data: ') + len('People data: ')
+            json_data = full_data_result[json_start:]
+            
+            # Parse the JSON
+            people_data = json.loads(json_data)
+            
+            # Extract just names and fact texts
+            people_facts = {}
+            for person in people_data:
+                name = person['name']
+                facts = person.get('facts', [])
+                fact_texts = [fact['text'] for fact in facts if fact.get('text')]
+                people_facts[name] = fact_texts
+            
+            total_people = len(people_facts)
+            total_facts = sum(len(facts) for facts in people_facts.values())
+            summary = f"Extracted {total_people} people with {total_facts} total facts."
+            
+            return f"{summary}\n\nPeople facts: {json.dumps(people_facts, indent=2, ensure_ascii=False)}"
+            
+        except (json.JSONDecodeError, KeyError, IndexError) as e:
+            return f"Error processing data: {str(e)}"
+        
+    def convert_json_to_formatted_string(self, people_facts_json: dict) -> str:
+        """
+        Convert a JSON dictionary of people facts to formatted string.
+        
+        Args:
+            people_facts_json: Dictionary with format {"Name": ["fact1", "fact2", ...]}
+        
+        Returns:
+            String with each person on a new line in format "Name: fact1, fact2, fact3"
+        """
+        formatted_lines = []
+        
+        for name, facts in people_facts_json.items():
+            # Join facts with commas
+            facts_string = ", ".join(facts)
+            
+            # Format as "Name: facts"
+            formatted_line = f"{name}: {facts_string}"
+            formatted_lines.append(formatted_line)
+        
+        return "\n".join(formatted_lines)
+
+if __name__ == "__main__":
+    """
+    Main method to demonstrate GraphPersonManager usage.
+    Gets all people from the knowledge graph and prints the results.
+    """
+    # Initialize the GraphPersonManager
+    # Update these connection parameters to match your Neo4j setup
+    graph_manager = GraphPersonManager(
+        uri="bolt://localhost:7687",
+        user="neo4j", 
+        password="password"  # Replace with your actual password
+    )
+    
+    try:
+        print("=" * 80)
+        print("KNOWLEDGE GRAPH - ALL PEOPLE")
+        print("=" * 80)
+        
+        print("\n" + "=" * 80)
+        print("GRAPH STATISTICS")
+        print("=" * 80)
+        
+        # Get graph statistics for overview
+        stats = graph_manager.get_graph_statistics()
+        print(stats)
+        
+        print("\n" + "=" * 80)
+        print("PEOPLE SUMMARY (without relationships)")
+        print("=" * 80)
+        
+        # Get people without relationships for a cleaner summary view
+        people_summary = graph_manager.get_all_people(include_relationships=True)
+        print(people_summary)
+
+        o1 = graph_manager.extract_people_facts_from_full_data()
+
+        print(o1)
+
+    except Exception as e:
+        print(f"❌ Error occurred: {str(e)}")
+        print("Make sure Neo4j is running and connection parameters are correct.")
+        
+    finally:
+        # Always close the database connection
+        print("\n🔌 Closing database connection...")
+        graph_manager.close()
+        print("✅ Connection closed successfully.")
