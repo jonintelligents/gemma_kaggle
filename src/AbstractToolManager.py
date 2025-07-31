@@ -5,8 +5,7 @@ import inspect
 
 class AbstractPersonToolManager(ABC):
     """
-    Abstract base class that defines person-related tools that need to be implemented.
-    Focuses on person management and fact handling operations with categorization.
+    Abstract base class for person-related tools with fact management and categorization.
     """
     
     def __init__(self):
@@ -16,7 +15,6 @@ class AbstractPersonToolManager(ABC):
     def _get_available_tools(self) -> List[str]:
         """Get list of all available tool names based on abstract methods."""
         abstract_methods = []
-        # Check all methods in the class hierarchy
         for cls in inspect.getmro(self.__class__):
             for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
                 if hasattr(method, '__isabstractmethod__') and method.__isabstractmethod__:
@@ -29,16 +27,12 @@ class AbstractPersonToolManager(ABC):
         return self._available_tools.copy()
     
     def inspect_tools(self) -> str:
-        """
-        Use reflection to inspect all tool methods and return their details.
-        Returns formatted string with tool names, parameters, and descriptions.
-        """
+        """Use reflection to inspect all tool methods and return their details."""
         tool_details = []
         tool_details.append("=" * 80)
         tool_details.append("AVAILABLE PERSON TOOLS INSPECTION")
         tool_details.append("=" * 80)
         
-        # Get abstract methods from the abstract base class
         abstract_tools = []
         for cls in inspect.getmro(self.__class__):
             if cls.__name__ == 'AbstractPersonToolManager':
@@ -53,17 +47,12 @@ class AbstractPersonToolManager(ABC):
         
         for tool_name, method in sorted(abstract_tools, key=lambda x: x[0]):
             try:
-                # Get method signature
                 sig = inspect.signature(method)
-                
-                # Get docstring
                 docstring = inspect.getdoc(method) or "No description available"
                 
-                # Format tool information
                 tool_details.append(f"\nTOOL: {tool_name}")
                 tool_details.append("-" * 50)
                 
-                # Parameters
                 params = []
                 for param_name, param in sig.parameters.items():
                     if param_name == 'self':
@@ -81,28 +70,7 @@ class AbstractPersonToolManager(ABC):
                 else:
                     tool_details.append("Parameters: None")
                 
-                # Description from docstring
                 tool_details.append(f"Description: {docstring}")
-                
-                # Extract expected parameters from docstring if available
-                if "Expected parameters:" in docstring:
-                    lines = docstring.split('\n')
-                    in_params_section = False
-                    expected_params = []
-                    for line in lines:
-                        line = line.strip()
-                        if "Expected parameters:" in line:
-                            in_params_section = True
-                            continue
-                        if in_params_section and line.startswith('- '):
-                            expected_params.append(line[2:])
-                        elif in_params_section and line == "":
-                            break
-                    
-                    if expected_params:
-                        tool_details.append("Expected Parameters:")
-                        for param in expected_params:
-                            tool_details.append(f"  - {param}")
                 
             except Exception as e:
                 tool_details.append(f"\nTOOL: {tool_name}")
@@ -112,16 +80,7 @@ class AbstractPersonToolManager(ABC):
         return '\n'.join(tool_details)
     
     def execute_tool(self, tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Main entry point for calling any tool. Routes to appropriate method.
-        
-        Args:
-            tool_name: Name of the tool to call
-            parameters: Parameters for the tool
-            
-        Returns:
-            Dict with success status and result/error
-        """
+        """Main entry point for calling any tool. Routes to appropriate method."""
         if tool_name not in self._available_tools:
             return {
                 "success": False,
@@ -130,7 +89,6 @@ class AbstractPersonToolManager(ABC):
             }
         
         try:
-            # Route to the appropriate tool method
             method = getattr(self, tool_name)
             result = method(**parameters)
             
@@ -161,557 +119,145 @@ class AbstractPersonToolManager(ABC):
     # === PERSON MANAGEMENT TOOLS ===
     
     @abstractmethod
-    def add_person(self, name: str, summary: str = None, properties: Dict[str, Any] = None) -> str:
+    def add_person(self, name: str, properties: Dict[str, Any] = None) -> str:
         """
-        Adds a new person or updates existing person in the database (UPSERT).
+        Add or update person with comprehensive personal/professional information (UPSERT).
         
-        ## Purpose
-        Add a new person or update an existing person (UPSERT functionality)
+        **NAME HANDLING:**
+        - If name is unknown, create descriptive identifier: "UNKNOWN - [brief description]"
+        - Examples: "UNKNOWN - barista at Starbucks", "UNKNOWN - person from gym class"
         
-        ## Use When
-        User wants to add someone new or update existing person information
+        **TIMESTAMP REQUIREMENT:**
+        - Always include "date_updated" in properties with current timestamp
+        - Format: "YYYY-MM-DD HH:MM:SS" or ISO format
         
-        ## Expected parameters
-        - name (str): Person name (used as unique identifier)
-        - summary (str, optional): Optional summary description of the person
-        - properties (Dict[str, Any], optional): Additional properties as a dictionary (email, phone, location, etc.)
+        **IMPORTANT: Only include properties with actual values. Do NOT include:**
+        - Empty dictionaries: {}
+        - Null/None values
+        - Empty strings or empty lists
         
-        ## Example Usage from System Prompt
+        Expected properties (only include if you have actual values):
+        - System: date_updated (REQUIRED - current timestamp)
+        - Contact: email, mobile_phone, home_phone, work_phone, address, work_address, city, state, country, postal_code
+        - Personal: age, birthday, gender, marital_status, personality_traits, interests, languages, education_level
+        - Relationship: relationship ("mom", "dad", "coworker", "friend", etc.), relationship_status, closeness_level  
+        - Professional: job_title, company, industry, department, seniority_level, work_location, linkedin
+        - Social: preferred_contact, social_media, communication_frequency, time_zone
+        - Context: how_we_met, met_date, last_contact, importance_level, notes
         
-        ### Basic Addition
-        ```
-        User: "Add John Smith, he's a software engineer at Google"
-        Assistant: I'll add John Smith to your network.
-        [Calls add_person with name="John Smith", summary="Software engineer at Google"]
-        ```
+        Examples:
+        add_person("John Smith", {"job_title": "Engineer", "company": "Google", "date_updated": "2024-01-15 14:30:00"})
+        add_person("UNKNOWN - coffee shop regular", {"relationship": "acquaintance", "date_updated": "2024-01-15 14:30:00"})
+        add_person("Jessica", {"relationship": "friend", "city": "Seattle", "date_updated": "2024-01-15 14:30:00"})
         
-        ## Important Notes
-        - **UPSERT Behavior**: Adding a person with an existing name will update that person
-        - **Unique Names**: Each person is identified by their name as a unique key
-        - **Always followed by facts**: This method should almost always be followed by add_person_fact calls to store relationship and other details
+        **CRITICAL: MUST be followed by add_person_fact calls for EVERY piece of information:**
+        1. FIRST fact: relationship type (e.g., "friend", "mom", "coworker")
+        2. Separate facts for each detail mentioned (location, interests, background, etc.)
         """
         pass
     
     @abstractmethod
     def get_all_people(self, include_relationships: bool = True) -> str:
         """
-        Retrieves all people from the database.
+        Retrieve all people from database with optional relationships.
+        Use for network overviews, contact lists, or relationship analysis.
         
-        ## Purpose
-        Retrieve all people from the database
-        
-        ## Use When
-        User wants to see everyone in their network or get a complete list
-        
-        ## Expected parameters
-        - include_relationships (bool, optional): Whether to include related entities and relationships (default: True)
-        
-        ## Example Usage from System Prompt
-        
-        ### Getting Complete Network Overview
-        ```
-        User: "Show me everyone in my network"
-        Assistant: Let me retrieve all the people in your network.
-        [Calls get_all_people with include_relationships=True]
-        ```
-        
-        ### Network Analysis
-        ```
-        User: "I want to see my entire contact database"
-        Assistant: I'll get all your contacts with their relationship information.
-        [Calls get_all_people with include_relationships=True]
-        ```
-        
-        ### Simple List Without Details
-        ```
-        User: "Just give me a list of names, no details"
-        Assistant: I'll get a simple list of all people.
-        [Calls get_all_people with include_relationships=False]
-        ```
-        
-        ## Use Cases
-        - **Relationship Management**: Get overview of entire network for relationship analysis
-        - **Network Maintenance**: Review all contacts to identify outdated information
-        - **Relationship Insights**: Analyze patterns across all relationships
-        - **Contact Export**: Prepare data for external use or backup
+        Examples:
+        get_all_people()  # Full network with relationships
+        get_all_people(include_relationships=False)  # Names only
         """
         pass
     
     @abstractmethod
     def get_person(self, name: str = None, person_id: str = None, include_relationships: bool = True) -> str:
         """
-        Retrieves a specific person or people matching criteria from the database.
+        Find specific person(s) by name or ID with partial matching.
+        Use before adding facts or for contact verification.
         
-        ## Purpose
-        Retrieve a specific person or people matching criteria
-        
-        ## Use When
-        User wants to find specific person(s) or search by name
-        
-        ## Expected parameters
-        - name (str, optional): Person name (supports partial matching)
-        - person_id (str, optional): Specific person ID
-        - include_relationships (bool, optional): Whether to include related entities and relationships (default: True)
-        
-        ## Example Usage from System Prompt
-        
-        ### Finding Someone by Name
-        ```
-        User: "Do I have anyone named Smith?"
-        Assistant: Let me search for people with "Smith" in their name.
-        [Calls get_person with name="Smith"]
-        ```
-        
-        ### Partial Name Search
-        ```
-        User: "Find everyone with 'John' in their name"
-        Assistant: I'll search for people matching 'John'.
-        [Calls get_person with name="John"]
-        ```
-        
-        ### Getting Specific Person Details
-        ```
-        User: "Tell me about Sarah"
-        Assistant: Let me get Sarah's information and relationships.
-        [Calls get_person with name="Sarah", include_relationships=True]
-        ```
-        
-        ### Quick Lookup Without Relationships
-        ```
-        User: "Is Mike in my contacts?"
-        Assistant: Let me check if Mike is in your network.
-        [Calls get_person with name="Mike", include_relationships=False]
-        ```
-        
-        ## Search Features
-        - **Partial Matching**: Supports finding people with partial name matches
-        - **Flexible Identification**: Can search by name or person_id
-        - **Relationship Context**: Option to include or exclude relationship information
-        
-        ## Common Use Cases
-        - **Before Adding Facts**: Check if person exists before adding information
-        - **Relationship Context**: Get full context before suggesting interactions
-        - **Contact Verification**: Verify someone is in the network
-        - **Information Lookup**: Quick access to stored information about someone
+        Examples:
+        get_person(name="Smith")  # Find anyone with "Smith" in name
+        get_person(name="Sarah", include_relationships=True)  # Full Sarah profile
+        get_person(person_id="12345")  # Specific person by ID
         """
         pass
     
     @abstractmethod
     def delete_person(self, person_id: str = None, name: str = None) -> str:
         """
-        Deletes a person and all their relationships from the database.
+        Permanently delete person and all relationships/facts.
+        Cannot be undone. Consider alternatives like delete_all_facts_for_person.
         
-        ## Purpose
-        Delete a person and all their relationships from the database
-        
-        ## Use When
-        User wants to permanently remove someone from their network
-        
-        ## Expected parameters
-        - person_id (str, optional): Person ID to delete
-        - name (str, optional): Person name to delete (must provide either person_id or name)
-        
-        ## Example Usage from System Prompt
-        
-        ### Remove Someone Completely
-        ```
-        User: "Remove John from my contacts completely"
-        Assistant: I'll permanently delete John and all associated information.
-        [Calls delete_person with name="John"]
-        ```
-        
-        ### Clean Up Outdated Contacts
-        ```
-        User: "Delete that old contact for Mike Johnson"
-        Assistant: I'll remove Mike Johnson from your network.
-        [Calls delete_person with name="Mike Johnson"]
-        ```
-        
-        ### Remove by ID
-        ```
-        User: "Delete person ID 12345"
-        Assistant: I'll remove that person from your database.
-        [Calls delete_person with person_id="12345"]
-        ```
-        
-        ## Important Warnings
-        - **Permanent Action**: All changes are permanent - deletions cannot be undone
-        - **Complete Removal**: Deletes person AND all their relationships/facts
-        - **Cascading Effect**: Removes all stored information about the person
-        
-        ## Use Cases
-        - **Privacy Management**: Remove people who are no longer relevant
-        - **Network Cleanup**: Remove outdated or incorrect entries
-        - **Relationship Changes**: Remove people after relationship ends
-        - **Data Management**: Clean up duplicate or test entries
-        
-        ## Alternative Actions
-        Consider these alternatives before deletion:
-        - **Update Information**: Use add_person to update instead of delete
-        - **Remove Facts Only**: Use delete_all_facts_for_person to keep person but remove details
-        - **Archive Strategy**: Add a fact marking person as "archived" instead of deleting
+        Examples:
+        delete_person(name="John Smith")  # Remove John completely
+        delete_person(person_id="12345")  # Remove by ID
         """
         pass
     
-    # === PERSON FACT MANAGEMENT TOOLS (WITH CATEGORIZATION) ===
+    # === PERSON FACT MANAGEMENT TOOLS ===
     
     @abstractmethod
     def add_person_fact(self, person_id: str, fact_text: str, fact_type: str = "general") -> str:
         """
-        Adds a categorized fact as a property to a person using upsert functionality.
-        Facts are stored as fact_1, fact_2, etc. up to fact_10, each with associated type.
+        Add categorized fact to person (stored as fact_1, fact_2, etc. up to fact_10).
         
-        ## Purpose
-        Add a fact about a person (stored sequentially as fact_1, fact_2, etc.)
+        Fact types: "relationship", "personal", "professional", "interest", "contact", 
+        "background", "preference", "skill", "health", "general"
         
-        ## Use When
-        User wants to record specific information or facts about someone
+        CRITICAL: Always store relationship type as FIRST fact when adding new person.
+        Extract and store ALL mentioned information as separate facts.
         
-        ## Expected parameters
-        - person_id (str): Person ID or name to add fact to
-        - fact_text (str): The fact text to add
-        - fact_type (str): Category/type of the fact (default: "general")
-          Common types: "personal", "professional", "contact", "preference", "relationship", "skill", "interest", "background", "health", "general"
-        
-        ## Example Usage from System Prompt
-        
-        ### Adding Multiple Facts
-        ```
-        User: "John Smith likes hiking and plays guitar"
-        Assistant: I'll add those facts about John Smith.
-        [Calls add_person_fact with person_id="John Smith", fact_text="likes hiking", fact_type="interest"]
-        [Calls add_person_fact with person_id="John Smith", fact_text="plays guitar", fact_type="interest"]
-        ```
-        
-        ### Relationship Information (HIGHEST PRIORITY)
-        ```
-        User: "Add my sister Sarah who goes to UCLA and her birthday is March 15th"
-        Process:
-        1. add_person for Sarah
-        2. add_person_fact for Sarah with fact_text="sister", fact_type="relationship"  # <-- ALWAYS FIRST
-        3. add_person_fact for Sarah with fact_text="attends UCLA", fact_type="professional"
-        4. add_person_fact for Sarah with fact_text="birthday: March 15th", fact_type="personal"
-        ```
-        
-        ### Information Extraction Patterns
-        
-        #### Family Relationships
-        ```
-        "my mom Ellen" → add_person_fact(person_id="Ellen", fact_text="mother", fact_type="relationship")
-        "my dad Kenny" → add_person_fact(person_id="Kenny", fact_text="father", fact_type="relationship")
-        "my wife Sarah" → add_person_fact(person_id="Sarah", fact_text="wife", fact_type="relationship")
-        "my brother Mike" → add_person_fact(person_id="Mike", fact_text="brother", fact_type="relationship")
-        ```
-        
-        #### Professional Information
-        ```
-        "my boss Janet" → add_person_fact(person_id="Janet", fact_text="boss", fact_type="relationship")
-        "works at Google" → add_person_fact(person_id="Person", fact_text="works at Google", fact_type="professional")
-        "my colleague Alex" → add_person_fact(person_id="Alex", fact_text="colleague", fact_type="relationship")
-        ```
-        
-        #### Location and Education
-        ```
-        "goes to UCLA" → add_person_fact(person_id="Person", fact_text="attends UCLA", fact_type="professional")
-        "lives in Seattle" → add_person_fact(person_id="Person", fact_text="lives in Seattle", fact_type="personal")
-        "from Boston" → add_person_fact(person_id="Person", fact_text="from Boston", fact_type="background")
-        ```
-        
-        #### Personal Details
-        ```
-        "birthday is March 15th" → add_person_fact(person_id="Person", fact_text="birthday: March 15th", fact_type="personal")
-        "has two kids" → add_person_fact(person_id="Person", fact_text="has two children", fact_type="personal")
-        "loves gardening" → add_person_fact(person_id="Person", fact_text="enjoys gardening", fact_type="interest")
-        ```
-        
-        ## Fact Storage Best Practices from System Prompt
-        
-        ### What to Track
-        - **Relationship type (HIGHEST PRIORITY - always store first)**
-        - Personal interests, hobbies, and passions
-        - Important dates (birthdays, anniversaries, milestones)
-        - Family information and significant relationships
-        - Professional details and career updates
-        - Recent life events and changes
-        - Communication preferences and patterns
-        - Shared experiences and memories
-        - Goals, challenges, and aspirations
-        - Geographic location and travel
-        - Health updates or concerns (when appropriate)
-        
-        ### Fact Categories To Use
-        - **relationship**: Family, professional, social relationships
-        - **personal**: Birthdays, family status, personal characteristics
-        - **professional**: Job, education, career details
-        - **interest**: Hobbies, activities, passions
-        - **contact**: Phone, email, address information
-        - **background**: Origin, history, past experiences
-        - **preference**: Likes, dislikes, preferences
-        - **skill**: Abilities, talents, expertise
-        - **health**: Health-related information (when appropriate)
-        - **general**: Other miscellaneous information
-        
-        ## Critical Rules
-        - **MANDATORY EXTRACTION**: ALWAYS extract and store ALL mentioned information as separate facts
-        - **RELATIONSHIP FIRST**: Always store relationship type as the first fact
-        - **SEPARATE FACTS**: Each piece of information should be a separate fact
-        - **LOGICAL ORDER**: Store facts in logical order (relationship first, then other details)
+        Examples:
+        - "my mom Sarah" → fact_text="mother", fact_type="relationship" (FIRST)
+        - "likes hiking" → fact_text="likes hiking", fact_type="interest"
+        - "works at Google" → fact_text="works at Google", fact_type="professional"
         """
         pass
     
     @abstractmethod
     def delete_person_fact(self, person_id: str, fact_number: int) -> str:
         """
-        Deletes a specific fact and its type from a person.
+        Delete specific fact (1-10) from person while preserving other information.
+        Use for outdated info, corrections, or selective cleanup.
         
-        ## Purpose
-        Delete a specific fact from a person
-        
-        ## Use When
-        User wants to remove a specific piece of information about someone
-        
-        ## Expected parameters
-        - person_id (str): Person ID or name
-        - fact_number (int): Fact number to delete (1-10)
-        
-        ## Example Usage from System Prompt
-        
-        ### Removing Outdated Information
-        ```
-        User: "Remove that old job information for Sarah, it was fact number 3"
-        Assistant: I'll remove fact 3 from Sarah's information.
-        [Calls delete_person_fact with person_id="Sarah", fact_number=3]
-        ```
-        
-        ### Correcting Mistakes
-        ```
-        User: "Delete the second fact about John, it was wrong"
-        Assistant: I'll remove fact 2 from John's profile.
-        [Calls delete_person_fact with person_id="John", fact_number=2]
-        ```
-        
-        ### Selective Information Removal
-        ```
-        User: "I want to keep Mike in my contacts but remove his phone number which is stored as fact 5"
-        Assistant: I'll remove just that specific fact while keeping Mike in your network.
-        [Calls delete_person_fact with person_id="Mike", fact_number=5]
-        ```
-        
-        ## Use Cases
-        - **Information Updates**: Remove outdated information before adding new facts
-        - **Privacy Management**: Remove sensitive information while keeping person
-        - **Error Correction**: Remove incorrect information that was accidentally added
-        - **Selective Cleanup**: Remove specific facts without affecting other information
-        
-        ## Important Notes
-        - **Specific Targeting**: Only removes the specified fact number and its type
-        - **Preserves Person**: Person remains in network with other facts intact
-        - **Permanent Action**: Deletion cannot be undone
-        - **Sequential Storage**: Facts are stored as fact_1, fact_2, etc. up to fact_10
+        Examples:
+        delete_person_fact("Sarah", 3)  # Remove Sarah's 3rd fact
+        delete_person_fact("John Smith", 1)  # Remove John's 1st fact
         """
         pass
     
     @abstractmethod
     def delete_all_facts_for_person(self, person_id: str) -> str:
         """
-        Deletes all facts and their types (fact_1 through fact_10, fact_type_1 through fact_type_10) from a person.
+        Clear all facts (fact_1 through fact_10) while keeping person in network.
+        Preserves person entry but removes all stored details.
         
-        ## Purpose
-        Delete all facts from a person
-        
-        ## Use When
-        User wants to clear all recorded facts about someone while keeping the person
-        
-        ## Expected parameters
-        - person_id (str): Person ID or name to delete all facts from
-        
-        ## Example Usage from System Prompt
-        
-        ### Clear All Information
-        ```
-        User: "Remove all the old information I had about Sarah"
-        Assistant: I'll clear all facts for Sarah while keeping her in your network.
-        [Calls delete_all_facts_for_person with person_id="Sarah"]
-        ```
-        
-        ### Fresh Start
-        ```
-        User: "Clear everything I know about Mike, I want to start over"
-        Assistant: I'll remove all stored facts about Mike but keep him as a contact.
-        [Calls delete_all_facts_for_person with person_id="Mike"]
-        ```
-        
-        ### Information Reset
-        ```
-        User: "Delete all details for John Smith but don't remove him from my network"
-        Assistant: I'll clear all facts while keeping John Smith as a contact.
-        [Calls delete_all_facts_for_person with person_id="John Smith"]
-        ```
-        
-        ## Use Cases
-        - **Complete Information Reset**: Start fresh with someone's information
-        - **Privacy Cleanup**: Remove all stored details while maintaining contact
-        - **Relationship Changes**: Clear old information when relationship dynamics change
-        - **Data Correction**: Remove all facts when there are multiple errors
-        
-        ## What Gets Removed
-        - **All Facts**: fact_1 through fact_10 are cleared
-        - **All Fact Types**: fact_type_1 through fact_type_10 are cleared
-        - **Complete Reset**: All stored information about the person is removed
-        
-        ## What Remains
-        - **Person Entry**: The person remains in the network
-        - **Basic Information**: Name and core person record preserved
-        - **Network Position**: Person's place in the network structure maintained
-        
-        ## Alternative to Full Deletion
-        This is often preferable to `delete_person` when you want to:
-        - Keep the person in your network but remove details
-        - Maintain relationship structure while clearing facts
-        - Prepare for fresh information entry
+        Examples:
+        delete_all_facts_for_person("Sarah")  # Clear all Sarah's facts
+        delete_all_facts_for_person("Mike Johnson")  # Fresh start for Mike
         """
         pass
     
     @abstractmethod
     def get_facts_by_type(self, person_id: str = None, fact_type: str = None) -> str:
         """
-        Retrieves facts filtered by type, optionally for a specific person.
+        Retrieve facts filtered by type and/or person.
         
-        ## Purpose
-        Retrieve facts filtered by type, optionally for a specific person
-        
-        ## Use When
-        User wants to find specific types of information across their network or for a specific person
-        
-        ## Expected parameters
-        - person_id (str, optional): Person ID or name to filter by (if None, searches all people)
-        - fact_type (str, optional): Type of facts to retrieve (if None, returns all facts with their types)
-        
-        ## Example Usage Scenarios
-        
-        ### Find All Professional Information
-        ```
-        User: "Show me all the professional information I have about people"
-        Assistant: I'll get all professional facts across your network.
-        [Calls get_facts_by_type with fact_type="professional"]
-        ```
-        
-        ### Get Someone's Interests
-        ```
-        User: "What interests does Sarah have?"
-        Assistant: Let me find all of Sarah's interests.
-        [Calls get_facts_by_type with person_id="Sarah", fact_type="interest"]
-        ```
-        
-        ### Find All Birthdays
-        ```
-        User: "Show me everyone's birthday information"
-        Assistant: I'll get all personal facts that might include birthdays.
-        [Calls get_facts_by_type with fact_type="personal"]
-        ```
-        
-        ### Relationship Analysis
-        ```
-        User: "What family relationships do I have stored?"
-        Assistant: Let me find all relationship facts in your network.
-        [Calls get_facts_by_type with fact_type="relationship"]
-        ```
-        
-        ### Complete Person Profile
-        ```
-        User: "Show me everything I know about John"
-        Assistant: I'll get all facts for John with their categories.
-        [Calls get_facts_by_type with person_id="John"]
-        ```
-        
-        ## Fact Type Categories
-        - **relationship**: Family, professional, social relationships
-        - **personal**: Birthdays, family status, personal characteristics  
-        - **professional**: Job, education, career details
-        - **interest**: Hobbies, activities, passions
-        - **contact**: Phone, email, address information
-        - **background**: Origin, history, past experiences
-        - **preference**: Likes, dislikes, preferences
-        - **skill**: Abilities, talents, expertise
-        - **health**: Health-related information (when appropriate)
-        - **general**: Other miscellaneous information
-        
-        ## Use Cases
-        - **Relationship Insights**: Analyze relationship patterns across network
-        - **Interest Matching**: Find people with similar interests
-        - **Professional Networking**: Identify professional connections
-        - **Event Planning**: Find birthdays and important dates
-        - **Information Audit**: Review what types of information you have
-        - **Category Analysis**: Understand information distribution patterns
+        Examples:
+        get_facts_by_type(fact_type="personal")  # All birthdays/personal info
+        get_facts_by_type(person_id="John", fact_type="interest")  # John's interests
+        get_facts_by_type(fact_type="relationship")  # All relationships
+        get_facts_by_type(person_id="Sarah")  # All Sarah's facts
         """
         pass
     
     @abstractmethod
     def update_fact_type(self, person_id: str, fact_number: int, new_fact_type: str) -> str:
         """
-        Updates the type/category of an existing fact without changing the fact text.
+        Update fact category without changing text content.
+        Use for recategorization, error correction, or better organization.
         
-        ## Purpose
-        Update the type/category of an existing fact without changing the fact text
-        
-        ## Use When
-        User wants to recategorize information without changing the actual fact content
-        
-        ## Expected parameters
-        - person_id (str): Person ID or name
-        - fact_number (int): Fact number to update type for (1-10)
-        - new_fact_type (str): New type/category for the fact
-        
-        ## Example Usage Scenarios
-        
-        ### Recategorizing Information
-        ```
-        User: "That hobby fact about Sarah should actually be categorized as a skill"
-        Assistant: I'll update the category for that fact.
-        [Calls update_fact_type with person_id="Sarah", fact_number=3, new_fact_type="skill"]
-        ```
-        
-        ### Correcting Categorization
-        ```
-        User: "John's fact number 2 should be professional, not general"
-        Assistant: I'll update that fact's category to professional.
-        [Calls update_fact_type with person_id="John", fact_number=2, new_fact_type="professional"]
-        ```
-        
-        ### Information Organization
-        ```
-        User: "Change Mike's contact information from general to contact type"
-        Assistant: I'll recategorize that information appropriately.
-        [Calls update_fact_type with person_id="Mike", fact_number=5, new_fact_type="contact"]
-        ```
-        
-        ## Available Fact Types
-        - **relationship**: Family, professional, social relationships
-        - **personal**: Birthdays, family status, personal characteristics
-        - **professional**: Job, education, career details
-        - **interest**: Hobbies, activities, passions
-        - **contact**: Phone, email, address information
-        - **background**: Origin, history, past experiences
-        - **preference**: Likes, dislikes, preferences
-        - **skill**: Abilities, talents, expertise
-        - **health**: Health-related information (when appropriate)
-        - **general**: Other miscellaneous information
-        
-        ## Use Cases
-        - **Information Organization**: Better categorize facts for easier retrieval
-        - **System Maintenance**: Correct categorization mistakes
-        - **Data Quality**: Improve information structure and searchability
-        - **Analysis Preparation**: Ensure proper categorization for relationship insights
-        
-        ## What Changes
-        - **Fact Type Only**: Only the category/type is updated
-        - **Fact Text Preserved**: The actual information remains unchanged
-        - **Better Organization**: Improves ability to filter and analyze information
-        
-        ## When to Use
-        - **After Initial Entry**: Refine categorization after adding facts quickly
-        - **System Evolution**: Update categories as your system understanding improves
-        - **Error Correction**: Fix miscategorized information
-        - **Organization Improvement**: Better structure your information for insights
+        Examples:
+        update_fact_type("Sarah", 3, "skill")  # Change fact 3 to skill type
+        update_fact_type("John", 2, "professional")  # Recategorize as professional
         """
         pass

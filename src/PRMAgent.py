@@ -327,7 +327,13 @@ def main():
 
     # Setup prompt manager
     prompt_manager = setup_prompt_manager()
-    system_prompt = prompt_manager.get_prompt("system", {"tool_function_descriptions" : tool_manager.get_available_tools()})
+    system_prompt = prompt_manager.get_prompt("system", {"tool_function_descriptions" : tool_manager.inspect_tools()})
+
+    file_name = 'system_prompt.md'
+    with open(file_name, 'w', encoding='utf-8') as md_file:
+        # Write the content of the system_prompt_content variable to the file.
+        md_file.write(system_prompt)
+
     chat_history = []
 
     print("""

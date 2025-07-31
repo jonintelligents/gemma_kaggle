@@ -1,6 +1,6 @@
 from AbstractToolManager import AbstractPersonToolManager
 from typing import Any, Dict
-from SVO import SVO
+from EntityKeywordExtractor import EntityExtractor
 import pprint
 
 class ExamplePersonToolManager(AbstractPersonToolManager):
@@ -13,12 +13,11 @@ class ExamplePersonToolManager(AbstractPersonToolManager):
         super().__init__()
         # Example in-memory storage for demonstration
         self.people_data = {}
-        self.extractor = SVO()
+        self.extractor = EntityExtractor()
     
-    def add_person(self, name: str, summary: str = None, properties: Dict[str, Any] = None) -> str:
+    def add_person(self, name: str, properties: Dict[str, Any] = None) -> str:
         props_str = f" with properties: {properties}" if properties else ""
-        summary_str = f" and summary: '{summary}'" if summary else ""
-        return f"Person '{name}' added/updated{summary_str}{props_str}"
+        return f"Person '{name}' added/updated{props_str}"
     
     def get_all_people(self, include_relationships: bool = True) -> str:
         rel_str = "with relationships" if include_relationships else "without relationships"
@@ -34,7 +33,7 @@ class ExamplePersonToolManager(AbstractPersonToolManager):
         return f"Deleted person - {identifier}"
     
     def add_person_fact(self, person_id: str, fact_text: str, fact_type: str = "general") -> str:
-        output = self.extractor.extract(str)
+        output = self.extractor.extract(fact_text, extract_key_terms=True, max_key_terms=5)
         pprint.pprint(output)
 
         return f"Added {fact_type} fact to person '{person_id}': {fact_text}"
@@ -74,7 +73,7 @@ if __name__ == "__main__":
     # Example 1: Basic person addition
     print("\n--- Example 1: Basic Addition ---")
     print("User: 'Add John Smith, he's a software engineer at Google'")
-    result = tool_manager.call_tool('add_person', {
+    result = tool_manager.execute_tool('add_person', {
         'name': 'John Smith', 
         'summary': 'Software engineer at Google'
     })
@@ -85,11 +84,11 @@ if __name__ == "__main__":
     print("User: 'Add my sister Sarah who goes to UCLA and her birthday is March 15th'")
     
     # Step 1: Add person
-    result1 = tool_manager.call_tool('add_person', {'name': 'Sarah'})
+    result1 = tool_manager.execute_tool('add_person', {'name': 'Sarah'})
     print("Step 1 - Add person:", result1['result'] if result1['success'] else result1['error'])
     
     # Step 2: Add relationship fact (HIGHEST PRIORITY)
-    result2 = tool_manager.call_tool('add_person_fact', {
+    result2 = tool_manager.execute_tool('add_person_fact', {
         'person_id': 'Sarah',
         'fact_text': 'sister',
         'fact_type': 'relationship'
@@ -97,7 +96,7 @@ if __name__ == "__main__":
     print("Step 2 - Add relationship:", result2['result'] if result2['success'] else result2['error'])
     
     # Step 3: Add education fact
-    result3 = tool_manager.call_tool('add_person_fact', {
+    result3 = tool_manager.execute_tool('add_person_fact', {
         'person_id': 'Sarah',
         'fact_text': 'attends UCLA',
         'fact_type': 'professional'
@@ -105,7 +104,7 @@ if __name__ == "__main__":
     print("Step 3 - Add education:", result3['result'] if result3['success'] else result3['error'])
     
     # Step 4: Add birthday fact
-    result4 = tool_manager.call_tool('add_person_fact', {
+    result4 = tool_manager.execute_tool('add_person_fact', {
         'person_id': 'Sarah',
         'fact_text': 'birthday: March 15th',
         'fact_type': 'personal'
@@ -118,7 +117,7 @@ if __name__ == "__main__":
     
     # Jessica processing
     print("\n-- Processing Jessica --")
-    result = tool_manager.call_tool('add_person', {'name': 'Jessica'})
+    result = tool_manager.execute_tool('add_person', {'name': 'Jessica'})
     print("Add Jessica:", result['result'] if result['success'] else result['error'])
     
     facts_jessica = [
@@ -128,7 +127,7 @@ if __name__ == "__main__":
     ]
     
     for fact_text, fact_type in facts_jessica:
-        result = tool_manager.call_tool('add_person_fact', {
+        result = tool_manager.execute_tool('add_person_fact', {
             'person_id': 'Jessica',
             'fact_text': fact_text,
             'fact_type': fact_type
@@ -137,7 +136,7 @@ if __name__ == "__main__":
     
     # Tom processing
     print("\n-- Processing Tom --")
-    result = tool_manager.call_tool('add_person', {'name': 'Tom'})
+    result = tool_manager.execute_tool('add_person', {'name': 'Tom'})
     print("Add Tom:", result['result'] if result['success'] else result['error'])
     
     facts_tom = [
@@ -147,7 +146,7 @@ if __name__ == "__main__":
     ]
     
     for fact_text, fact_type in facts_tom:
-        result = tool_manager.call_tool('add_person_fact', {
+        result = tool_manager.execute_tool('add_person_fact', {
             'person_id': 'Tom',
             'fact_text': fact_text,
             'fact_type': fact_type
@@ -157,17 +156,17 @@ if __name__ == "__main__":
     # Example 4: Search and retrieval
     print("\n--- Example 4: Search and Retrieval ---")
     print("User: 'Do I have anyone named Smith?'")
-    result = tool_manager.call_tool('get_person', {'name': 'Smith'})
+    result = tool_manager.execute_tool('get_person', {'name': 'Smith'})
     print("Search result:", result['result'] if result['success'] else result['error'])
     
     # Example 5: Fact management
     print("\n--- Example 5: Fact Management ---")
     print("User: 'Show me all the professional information I have about people'")
-    result = tool_manager.call_tool('get_facts_by_type', {'fact_type': 'professional'})
+    result = tool_manager.execute_tool('get_facts_by_type', {'fact_type': 'professional'})
     print("Professional facts:", result['result'] if result['success'] else result['error'])
     
     print("User: 'What interests does Tom have?'")
-    result = tool_manager.call_tool('get_facts_by_type', {
+    result = tool_manager.execute_tool('get_facts_by_type', {
         'person_id': 'Tom',
         'fact_type': 'interest'
     })
@@ -176,7 +175,7 @@ if __name__ == "__main__":
     # Example 6: Information cleanup
     print("\n--- Example 6: Information Cleanup ---")
     print("User: 'Remove all the old information I had about Sarah'")
-    result = tool_manager.call_tool('delete_all_facts_for_person', {'person_id': 'Sarah'})
+    result = tool_manager.execute_tool('delete_all_facts_for_person', {'person_id': 'Sarah'})
     print("Cleanup result:", result['result'] if result['success'] else result['error'])
     
     print("\n" + "="*80)
