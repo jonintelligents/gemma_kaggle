@@ -18,7 +18,7 @@ class EntityExtractor:
         result = extractor.extract("Barack Obama was born in Honolulu.")
     """
     
-    def __init__(self, model_name: str = "en_core_web_sm"):
+    def __init__(self, model_name: str = "en_core_web_lg"):
         """
         Initialize the entity extractor with a spaCy model.
         
