@@ -1,36 +1,12 @@
 import json
 import os
+import argparse
 from google import genai
-from PromptManager import PromptManager
 from ToolManager import ExamplePersonToolManager
 import logging
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# --- Neo4j Configuration ---
-NEO4J_URI = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
-NEO4J_USER = os.getenv('NEO4J_USER', 'neo4j')
-NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD', 'password')
-
-# def init_neo4j():
-#     """
-#     Initialize Neo4j connection and verify it's working.
-#     The Neo4jToolManager handles constraint creation automatically.
-#     """
-#     logging.info(f"Initializing Neo4j connection to: {NEO4J_URI}")
-#     try:
-#         # Create tool manager - this will test the connection and create constraints
-#         tool_manager = Neo4jToolManager(
-#             uri=NEO4J_URI,
-#             user=NEO4J_USER,
-#             password=NEO4J_PASSWORD
-#         )
-#         logging.info("Neo4j database initialized successfully.")
-#         return tool_manager
-#     except Exception as e:
-#         logging.error(f"Failed to initialize Neo4j: {e}")
-#         raise
 
 # --- Gemini API Setup ---
 def setup_gemini_api():
@@ -41,92 +17,15 @@ def setup_gemini_api():
     client = genai.Client()
     return client
 
-# --- Prompt Manager ---
-def setup_prompt_manager(prompts_dir: str = "./prompts"):
-    try:
-        pm = PromptManager(prompts_dir)
-        if pm.has_prompt("system"):
-            return pm
-    except Exception:
-        return None
-
 # --- Call Gemini and parse response ---
-def get_graph_context(tool_manager):
-    """Get current graph state to provide context to the LLM."""
-    try:
-        # Get all nodes with their IDs and properties
-        nodes_query = """
-        MATCH (n)
-        RETURN elementId(n) as element_id, 
-               labels(n) as labels, 
-               properties(n) as properties
-        """
-        nodes_result = tool_manager.execute_tool("query_graph", {"cypher_query": nodes_query})
-        nodes = json.loads(nodes_result) if nodes_result != "[]" else []
-        
-        # Get all relationships
-        relationships_query = """
-        MATCH (a)-[r]->(b)
-        RETURN elementId(a) as from_element_id,
-               properties(a) as from_properties,
-               labels(a) as from_labels,
-               type(r) as relationship_type,
-               properties(r) as rel_properties,
-               elementId(b) as to_element_id,
-               properties(b) as to_properties,
-               labels(b) as to_labels
-        """
-        relationships_result = tool_manager.execute_tool("query_graph", {"cypher_query": relationships_query})
-        relationships = json.loads(relationships_result) if relationships_result != "[]" else []
-        
-        # Format for LLM context
-        context = "=== CURRENT GRAPH STATE ===\n"
-        
-        if nodes:
-            context += "EXISTING NODES:\n"
-            for node in nodes:
-                element_id = node.get('element_id', 'unknown')
-                labels = node.get('labels', [])
-                props = node.get('properties', {})
-                name = props.get('name', props.get('id', 'unnamed'))
-                label_str = f"({','.join(labels)})" if labels else ""
-                context += f"  - ID: {element_id}, Name: '{name}' {label_str}\n"
-                if props:
-                    context += f"    Properties: {props}\n"
-        else:
-            context += "EXISTING NODES: None\n"
-        
-        if relationships:
-            context += "\nEXISTING RELATIONSHIPS:\n"
-            for rel in relationships:
-                from_name = rel.get('from_properties', {}).get('name', 'unnamed')
-                to_name = rel.get('to_properties', {}).get('name', 'unnamed')
-                rel_type = rel.get('relationship_type', 'unknown')
-                context += f"  - '{from_name}' -{rel_type}-> '{to_name}'\n"
-        else:
-            context += "\nEXISTING RELATIONSHIPS: None\n"
-        
-        context += "=== END GRAPH STATE ===\n\n"
-        return context
-        
-    except Exception as e:
-        logging.error(f"Error getting graph context: {e}")
-        return "=== ERROR: Could not retrieve graph context ===\n\n"
-
-def call_gemini_llm(user_query: str, chat_history: list, client, system_prompt: str = None, tool_manager=None):
+def call_gemini_llm(user_query: str, chat_history: list, client, system_prompt: str = None, tool_manager=None, is_chat_mode=True):
     logging.info(f"Calling Gemini LLM with query: '{user_query}'")
-    
-    # Get current graph context
-    graph_context = get_graph_context(tool_manager) if tool_manager else ""
 
     try:
         if system_prompt:
             full_context = system_prompt + "\n\n"
         else:
             full_context = ""
-        
-        # Add graph context
-        full_context += graph_context
         
         # Add conversation history
         full_context += "Conversation history:\n"
@@ -158,28 +57,37 @@ def call_gemini_llm(user_query: str, chat_history: list, client, system_prompt: 
                 return {"type": "text", "content": response_text}
             else:
                 print(f"\nLLM Response: {response_text}")
-                print("\nI'm going to perform these operations:")
-                for i, tool in enumerate(tool_calls, 1):
-                    print(f"{i}. Tool: {tool['name']} with arguments {tool.get('parameters', {})}")
+                
+                if is_chat_mode:
+                    print("\nI'm going to perform these operations:")
+                    for i, tool in enumerate(tool_calls, 1):
+                        print(f"{i}. Tool: {tool['name']} with arguments {tool.get('parameters', {})}")
 
-                proceed = input("\nShall I proceed? (yes/No): ").strip().lower()
-                if proceed == "yes":
-                    for tool in tool_calls:
-                        try:
-                            tool_output = tool_manager.execute_tool(tool["name"], tool.get("parameters", {}))
-                            print(f"\n✅ Tool '{tool['name']}' executed. Output: {tool_output}")
-                            chat_history.append({
-                                "role": "assistant",
-                                "content": f"Executed tool '{tool['name']}' with result: {tool_output}"
-                            })
-                        except Exception as e:
-                            print(f"❌ Error executing tool '{tool['name']}': {e}")
-                            logging.error(f"Tool execution failed: {e}", exc_info=True)
-                    return {"type": "tool_call_complete"}
+                    proceed = input("\nShall I proceed? (yes/No): ").strip().lower()
+                    if proceed != "yes":
+                        print("Tool execution cancelled. Waiting for next prompt...")
+                        chat_history.append({"role": "assistant", "content": "Tool execution was cancelled."})
+                        return {"type": "cancelled"}
                 else:
-                    print("Tool execution cancelled. Waiting for next prompt...")
-                    chat_history.append({"role": "assistant", "content": "Tool execution was cancelled."})
-                    return {"type": "cancelled"}
+                    print("\nExecuting tools:")
+                    for i, tool in enumerate(tool_calls, 1):
+                        print(f"{i}. Tool: {tool['name']} with arguments {tool.get('parameters', {})}")
+
+                # Execute tools
+                for tool in tool_calls:
+                    try:
+                        tool_output = tool_manager.execute_tool(tool["name"], tool.get("parameters", {}))
+                        print(f"\n✅ Tool '{tool['name']}' executed. Output: {tool_output}")
+                        chat_history.append({
+                            "role": "assistant",
+                            "content": f"Executed tool '{tool['name']}' with result: {tool_output}"
+                        })
+                    except Exception as e:
+                        print(f"❌ Error executing tool '{tool['name']}': {e}")
+                        logging.error(f"Tool execution failed: {e}", exc_info=True)
+                        
+                return {"type": "tool_call_complete"}
+                
         except json.JSONDecodeError as e:
             print("❌ Failed to parse LLM JSON response.")
             logging.error(f"JSON decode error: {e}")
@@ -188,165 +96,16 @@ def call_gemini_llm(user_query: str, chat_history: list, client, system_prompt: 
         logging.error(f"Gemini API Error: {e}", exc_info=True)
         return {"type": "text", "content": f"An error occurred: {e}"}
 
-# --- Graph visualization helper (optional) ---
-def show_graph_stats(tool_manager):
-    """Display basic statistics about the graph."""
-    try:
-        stats_query = """
-        MATCH (n)
-        RETURN labels(n) as labels, count(n) as count
-        ORDER BY count DESC
-        """
-        result = tool_manager.execute_tool("query_graph", {"cypher_query": stats_query})
-        
-        print("\n📊 Graph Statistics:")
-        stats = json.loads(result)
-        if stats:
-            for stat in stats:
-                labels = stat.get('labels', ['Unknown'])
-                count = stat.get('count', 0)
-                print(f"  {labels[0] if labels else 'Unknown'}: {count} nodes")
-        
-        # Count relationships
-        rel_query = """
-        MATCH ()-[r]->()
-        RETURN type(r) as relationship_type, count(r) as count
-        ORDER BY count DESC
-        """
-        result = tool_manager.execute_tool("query_graph", {"cypher_query": rel_query})
-        rel_stats = json.loads(result)
-        
-        if rel_stats:
-            print("  Relationships:")
-            for stat in rel_stats:
-                rel_type = stat.get('relationship_type', 'Unknown')
-                count = stat.get('count', 0)
-                print(f"    {rel_type}: {count}")
-        
-        print()
-    except Exception as e:
-        logging.error(f"Error getting graph stats: {e}")
-
-# --- Interactive graph exploration commands ---
-def handle_special_commands(user_input: str, tool_manager):
-    """Handle special commands for graph exploration."""
-    user_input = user_input.strip().lower()
-    
-    if user_input == "/stats":
-        show_graph_stats(tool_manager)
-        return True
-    
-    elif user_input == "/contacts":
-        try:
-            result = tool_manager.execute_tool("get_contact", {"include_relationships": False})
-            contacts = json.loads(result)
-            if contacts and contacts != "No contact found matching the criteria.":
-                print("\n👥 All Contacts:")
-                for contact in contacts:
-                    name = contact.get('name', 'Unknown')
-                    summary = contact.get('summary', '')
-                    print(f"  • {name}" + (f" - {summary}" if summary else ""))
-            else:
-                print("\n👥 No contacts found.")
-        except Exception as e:
-            print(f"Error retrieving contacts: {e}")
-        return True
-    
-    elif user_input.startswith("/network "):
-        contact_name = user_input[9:].strip()
-        try:
-            result = tool_manager.execute_tool("get_contact_network", {
-                "contact_name": contact_name,
-                "depth": 2
-            })
-            network = json.loads(result)
-            if "center_contact" in network:
-                print(f"\n🕸️ Network for {contact_name}:")
-                connected = network.get('connected_nodes', [])
-                relationships = network.get('relationships', [])
-                print(f"  Connected to {len(connected)} entities")
-                print(f"  {len(relationships)} relationships")
-                
-                # Show some examples
-                for i, node in enumerate(connected[:5]):
-                    node_name = node.get('name') or node.get('id', 'Unknown')
-                    labels = node.get('labels', [])
-                    label_str = f" ({labels[0]})" if labels else ""
-                    print(f"    • {node_name}{label_str}")
-                
-                if len(connected) > 5:
-                    print(f"    ... and {len(connected) - 5} more")
-            else:
-                print(f"\n🕸️ {result}")
-        except Exception as e:
-            print(f"Error getting network: {e}")
-        return True
-    
-    elif user_input == "/help":
-        print("""
-🔧 Special Commands:
-  /stats          - Show graph statistics
-  /contacts       - List all contacts
-  /network <name> - Show network for a contact
-  /help           - Show this help
-  exit            - Quit the application
-
-💡 You can also ask natural language questions like:
-  "Add John as a contact who works at Acme Corp"
-  "Show me all software engineers"
-  "Who knows someone at Google?"
-  "Create a relationship between Alice and Bob"
-        """)
-        return True
-    
-    return False
-
-# --- Main loop ---
-def main():
-    print("🚀 Starting Neo4j LLM + Tooling Demo...")
-    
-    # Initialize Neo4j
-    try:
-        #tool_manager = init_neo4j()
-        tool_manager = ExamplePersonToolManager()
-        
-        print(f"✅ ToolManager initialized with tools: {', '.join(tool_manager.get_available_tools())}")
-    except Exception as e:
-        print(f"❌ Failed to initialize Neo4j: {e}")
-        print("Make sure Neo4j is running and credentials are correct.")
-        print("Set environment variables: NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD")
-        return
-
-    # Initialize Gemini API
-    try:
-        client = setup_gemini_api()
-        print("✅ Gemini API configured successfully!")
-    except ValueError as e:
-        print(f"❌ Error: {e}")
-        return
-
-    # Setup prompt manager
-    prompt_manager = setup_prompt_manager()
-    system_prompt = prompt_manager.get_prompt("system", {"tool_function_descriptions" : tool_manager.inspect_tools()})
-
-    file_name = 'system_prompt.md'
-    with open(file_name, 'w', encoding='utf-8') as md_file:
-        # Write the content of the system_prompt_content variable to the file.
-        md_file.write(system_prompt)
-
+def run_chat_mode(tool_manager, client, system_prompt):
+    """Run the interactive chat mode."""
     chat_history = []
 
     print("""
-🎯 Welcome to the Neo4j Graph LLM Demo!
+🎯 Welcome to the LLM Tool Demo!
 
-This system can manage contacts, entities, and relationships in a Neo4j graph database.
-You can ask questions in natural language or use special commands.
-
-Type '/help' for commands or 'exit' to quit.
+This system can execute tools based on your natural language requests.
+Type 'exit' to quit.
 """)
-
-    # Show initial stats
-    show_graph_stats(tool_manager)
 
     while True:
         try:
@@ -358,24 +117,18 @@ Type '/help' for commands or 'exit' to quit.
             
             if not user_input:
                 continue
-            
-            # Handle special commands
-            if handle_special_commands(user_input, tool_manager):
-                continue
 
             # Add to chat history
             chat_history.append({"role": "user", "content": user_input})
 
             # Call LLM
-            result = call_gemini_llm(user_input, chat_history, client, system_prompt, tool_manager)
+            result = call_gemini_llm(user_input, chat_history, client, system_prompt, tool_manager, is_chat_mode=True)
 
             if result["type"] == "text":
                 # Response already printed inside the function
                 continue
             elif result["type"] == "tool_call_complete":
-                # Show updated stats after tool execution
-                print("\n📊 Updated graph:")
-                show_graph_stats(tool_manager)
+                print("\n✅ Tool execution completed.")
                 continue
             elif result["type"] == "cancelled":
                 continue
@@ -389,12 +142,115 @@ Type '/help' for commands or 'exit' to quit.
             print(f"❌ An error occurred: {e}")
             logging.error(f"Main loop error: {e}", exc_info=True)
 
-    # Clean up
+def run_single_prompt(prompt, tool_manager, client, system_prompt):
+    """Run a single prompt and execute any tool calls automatically."""
+    chat_history = []
+    
+    print(f"🚀 Processing prompt: {prompt}")
+    
+    # Add to chat history
+    chat_history.append({"role": "user", "content": prompt})
+    
+    # Call LLM
+    result = call_gemini_llm(prompt, chat_history, client, system_prompt, tool_manager, is_chat_mode=False)
+    
+    if result["type"] == "tool_call_complete":
+        print("\n✅ All tool calls completed successfully.")
+    elif result["type"] == "text":
+        print("📄 No tool calls were needed.")
+    else:
+        print("⚠️ Unexpected response type.")
+
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="LLM Tool Demo")
+    parser.add_argument(
+        "--chat", 
+        action="store_true", 
+        help="Run in interactive chat mode"
+    )
+    parser.add_argument(
+        "prompt",
+        nargs="?",
+        help="Single prompt to process (required if not using --chat)"
+    )
+    
+    args = parser.parse_args()
+    
+    # Validate arguments
+    if not args.chat and not args.prompt:
+        parser.error("Either --chat flag or a prompt argument is required")
+    
+    if args.chat and args.prompt:
+        parser.error("Cannot use both --chat flag and prompt argument")
+    
+    return args
+
+# --- Main function ---
+def main():
+    # Parse command line arguments
+    args = parse_arguments()
+    
+    print("🚀 Starting LLM + Tooling Demo...")
+    
+    # Initialize tool manager
     try:
-        tool_manager.close()
-        print("✅ Neo4j connection closed.")
+        tool_manager = ExamplePersonToolManager()
+        print(f"✅ ToolManager initialized with tools: {', '.join(tool_manager.get_available_tools())}")
     except Exception as e:
-        logging.error(f"Error closing Neo4j connection: {e}")
+        print(f"❌ Failed to initialize tool manager: {e}")
+        return
+
+    # Initialize Gemini API
+    try:
+        client = setup_gemini_api()
+        print("✅ Gemini API configured successfully!")
+    except ValueError as e:
+        print(f"❌ Error: {e}")
+        return
+
+    # Setup system prompt
+    system_prompt = f"""You are an AI assistant that can execute tools to help users accomplish tasks.
+
+Available tools: {', '.join(tool_manager.get_available_tools())}
+
+Tool descriptions:
+{tool_manager.inspect_tools()}
+
+When you need to use tools, respond with JSON in this format:
+{{
+    "response": "Your explanation of what you're going to do",
+    "tool_calls": [
+        {{
+            "name": "tool_name",
+            "parameters": {{"param1": "value1", "param2": "value2"}}
+        }}
+    ]
+}}
+
+If you don't need to use any tools, respond with JSON in this format:
+{{
+    "response": "Your response to the user"
+}}
+"""
+
+    # Save system prompt to file (optional)
+    file_name = 'system_prompt.md'
+    with open(file_name, 'w', encoding='utf-8') as md_file:
+        md_file.write(system_prompt)
+
+    try:
+        if args.chat:
+            run_chat_mode(tool_manager, client, system_prompt)
+        else:
+            run_single_prompt(args.prompt, tool_manager, client, system_prompt)
+    finally:
+        # Clean up
+        try:
+            tool_manager.close()
+            print("✅ Tool manager connection closed.")
+        except Exception as e:
+            logging.error(f"Error closing tool manager connection: {e}")
 
 if __name__ == "__main__":
     main()
