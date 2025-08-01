@@ -64,6 +64,41 @@ class GraphPersonManager(AbstractPersonToolManager):
         if self.driver:
             self.driver.close()
 
+    def clear_all_data(self) -> str:
+        """
+        Clear all data from the graph database.
+        WARNING: This will delete ALL nodes and relationships in the database!
+        
+        Returns:
+            Status message indicating success or failure
+        """
+        try:
+            with self.driver.session() as session:
+                # Delete all nodes and relationships
+                delete_query = """
+                MATCH (n)
+                DETACH DELETE n
+                """
+                
+                result = session.run(delete_query)
+                
+                # Get count of remaining nodes to verify deletion
+                count_query = "MATCH (n) RETURN COUNT(n) as node_count"
+                count_result = session.run(count_query)
+                remaining_nodes = count_result.single()['node_count']
+                
+                if remaining_nodes == 0:
+                    self.logger.info("Successfully cleared all data from the graph database")
+                    return "✅ Successfully cleared all data from the graph database"
+                else:
+                    self.logger.warning(f"Warning: {remaining_nodes} nodes still remain in the database")
+                    return f"⚠️ Warning: {remaining_nodes} nodes still remain in the database"
+                    
+        except Exception as e:
+            error_msg = f"❌ Error clearing database: {str(e)}"
+            self.logger.error(error_msg)
+            return error_msg
+
     def _create_constraints(self):
         """Create unique constraints and indexes for better performance."""
         with self.driver.session() as session:
@@ -412,6 +447,17 @@ if __name__ == "__main__":
         print("ENHANCED KNOWLEDGE GRAPH WITH VECTOR SEARCH")
         print("=" * 80)
         
+        # Clear all existing data first
+        print("\n" + "=" * 50)
+        print("CLEARING EXISTING DATA")
+        print("=" * 50)
+        
+        print(graph_manager.clear_all_data())
+        
+        # Verify database is empty
+        print("\nVerifying database is clean:")
+        print(graph_manager.get_graph_statistics())
+        
         # Add some sample data for testing
         print("\n" + "=" * 50)
         print("ADDING SAMPLE DATA")
@@ -436,7 +482,7 @@ if __name__ == "__main__":
         print(graph_manager.add_person_fact("Carol Davis", "Carol volunteers at the local animal shelter", "volunteer"))
         
         print("\n" + "=" * 50)
-        print("GRAPH STATISTICS")
+        print("GRAPH STATISTICS AFTER ADDING DATA")
         print("=" * 50)
         
         print(graph_manager.get_graph_statistics())

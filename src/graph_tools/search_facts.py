@@ -13,8 +13,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from sentence_transformers import SentenceTransformer
-
  # Initialize the sentence transformer model for embeddings
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 embedding_dimension = 384  # Dimension for all-MiniLM-L6-v2
