@@ -16,10 +16,17 @@ extractor = EntityExtractor()
 def run(driver, person_id: str, fact_text: str, fact_type: str = "general") -> str:
     """Add a fact node with embedding, extract entities, and create inter-person relationships."""
     with driver.session() as session:
-        # First check if person exists
+        # First check if person exists, if not create them
         person_check = session.run("MATCH (p:Person {name: $person_id}) RETURN p", person_id=person_id)
         if not person_check.single():
-            return f"Error: Person '{person_id}' not found"
+            # Create the person if they don't exist
+            session.run("""
+                CREATE (p:Person {
+                    name: $person_id,
+                    created_at: $created_at
+                })
+            """, person_id=person_id, created_at=datetime.now().isoformat())
+            logger.info(f"Created new person: {person_id}")
         
         # Generate embedding for the fact text
         embedding = _get_text_embedding(fact_text)
@@ -110,9 +117,9 @@ def run(driver, person_id: str, fact_text: str, fact_type: str = "general") -> s
                         if result.single():
                             entities_connected.append(f"{entity_name} ({entity_type}) [new]")
         
-        # Handle inter-person relationships
+        # Handle inter-person relationships - ENHANCED VERSION
         for potential_name in potential_person_names:
-            # Check if this person exists in the graph
+            # Check if this person exists in the graph, if not create them
             person_exists_query = """
             MATCH (other:Person {name: $potential_name})
             RETURN other.name as name
@@ -120,36 +127,93 @@ def run(driver, person_id: str, fact_text: str, fact_type: str = "general") -> s
             
             existing_person = session.run(person_exists_query, potential_name=potential_name).single()
             
-            if existing_person:
-                # Determine relationship type
+            if not existing_person:
+                # Create the new person if they don't exist
+                session.run("""
+                    CREATE (p:Person {
+                        name: $potential_name,
+                        created_at: $created_at
+                    })
+                """, potential_name=potential_name, created_at=datetime.now().isoformat())
+                logger.info(f"Created new person from relationship: {potential_name}")
+            
+            # Determine relationship type
+            relationship_type = _determine_relationship_type(fact_text, potential_name)
+            
+            # Create bidirectional relationship (only if not already exists)
+            create_relationship_query = """
+            MATCH (p1:Person {name: $person_id})
+            MATCH (p2:Person {name: $other_person})
+            MERGE (p1)-[r1:RELATED_TO {relationship_type: $relationship_type}]->(p2)
+            ON CREATE SET r1.via_fact = $fact_id, r1.created_at = $created_at
+            MERGE (p2)-[r2:RELATED_TO {relationship_type: $relationship_type}]->(p1)
+            ON CREATE SET r2.via_fact = $fact_id, r2.created_at = $created_at
+            RETURN p2.name as connected_person
+            """
+            
+            result = session.run(create_relationship_query,
+                                person_id=person_id,
+                                other_person=potential_name,
+                                relationship_type=relationship_type,
+                                fact_id=fact_id,
+                                created_at=datetime.now().isoformat())
+            
+            if result.single():
+                people_connected.append(f"{potential_name} ({relationship_type})")
+        
+        # SPECIAL HANDLING: If fact is just a relationship type (like "best friend") 
+        # and no person names were extracted, look for recent similar facts
+        if (not potential_person_names and 
+            fact_type == "relationship" and 
+            any(rel_word in fact_text.lower() for rel_word in ['friend', 'colleague', 'married', 'spouse', 'sibling', 'brother', 'sister'])):
+            
+            # Look for other people who have the same relationship fact added recently (within last minute)
+            similar_facts_query = """
+            MATCH (other:Person)-[:HAS_FACT]->(f:Fact)
+            WHERE f.text = $fact_text 
+            AND f.type = $fact_type
+            AND other.name <> $person_id
+            AND datetime(f.created_at) >= datetime($recent_time)
+            RETURN other.name as other_person, f.created_at as fact_time
+            ORDER BY f.created_at DESC
+            LIMIT 5
+            """
+            
+            recent_time = datetime.now().replace(microsecond=0).isoformat()[:-3] + "Z"  # Last minute
+            recent_time = datetime.now().replace(second=0, microsecond=0).isoformat()  # Last minute
+            
+            similar_facts = session.run(similar_facts_query,
+                                      fact_text=fact_text,
+                                      fact_type=fact_type,
+                                      person_id=person_id,
+                                      recent_time=recent_time).data()
+            
+            # Connect to people with matching relationship facts
+            for fact_record in similar_facts:
+                other_person = fact_record['other_person']
                 relationship_type = _determine_relationship_type(fact_text)
                 
-                # Create bidirectional relationship (only if not already exists)
-                create_relationship_query = """
+                # Create bidirectional relationship
+                auto_relationship_query = """
                 MATCH (p1:Person {name: $person_id})
                 MATCH (p2:Person {name: $other_person})
-                MERGE (p1)-[:RELATED_TO {
-                    relationship_type: $relationship_type,
-                    via_fact: $fact_id,
-                    created_at: $created_at
-                }]->(p2)
-                MERGE (p2)-[:RELATED_TO {
-                    relationship_type: $relationship_type,
-                    via_fact: $fact_id,
-                    created_at: $created_at
-                }]->(p1)
+                MERGE (p1)-[r1:RELATED_TO {relationship_type: $relationship_type}]->(p2)
+                ON CREATE SET r1.via_fact = $fact_id, r1.created_at = $created_at, r1.auto_detected = true
+                MERGE (p2)-[r2:RELATED_TO {relationship_type: $relationship_type}]->(p1)
+                ON CREATE SET r2.via_fact = $fact_id, r2.created_at = $created_at, r2.auto_detected = true
                 RETURN p2.name as connected_person
                 """
                 
-                result = session.run(create_relationship_query,
+                result = session.run(auto_relationship_query,
                                     person_id=person_id,
-                                    other_person=potential_name,
+                                    other_person=other_person,
                                     relationship_type=relationship_type,
                                     fact_id=fact_id,
                                     created_at=datetime.now().isoformat())
                 
                 if result.single():
-                    people_connected.append(f"{potential_name} ({relationship_type})")
+                    people_connected.append(f"{other_person} ({relationship_type}) [auto-detected]")
+                    logger.info(f"Auto-detected relationship: {person_id} -> {other_person} ({relationship_type})")
         
         # Format response
         response = f"Added {fact_type} fact to person '{person_id}': {fact_text}"
@@ -171,12 +235,44 @@ def _get_text_embedding(text: str) -> List[float]:
         logger.error(f"Error generating embedding: {e}")
         return [0.0] * embedding_dimension
     
-def _determine_relationship_type(fact_text: str) -> str:
+def _determine_relationship_type(fact_text: str, other_person: str = None) -> str:
     """
     Determine the type of relationship based on fact text.
+    Enhanced to look for context around the specific person name.
     """
     fact_lower = fact_text.lower()
     
+    # If we have the other person's name, look for context around it
+    if other_person:
+        other_lower = other_person.lower()
+        # Create patterns that look for relationship words near the person's name
+        person_context_patterns = [
+            f"married to {other_lower}",
+            f"{other_lower} is my (?:husband|wife|spouse)",
+            f"my (?:husband|wife|spouse) {other_lower}",
+            f"friends with {other_lower}",
+            f"{other_lower} is my friend",
+            f"my friend {other_lower}",
+            f"brother {other_lower}",
+            f"sister {other_lower}",
+            f"{other_lower} is my (?:brother|sister)",
+            f"colleague {other_lower}",
+            f"works with {other_lower}",
+            f"{other_lower} (?:works|worked) with",
+        ]
+        
+        for pattern in person_context_patterns:
+            if re.search(pattern, fact_lower):
+                if any(word in pattern for word in ['married', 'husband', 'wife', 'spouse']):
+                    return 'SPOUSE'
+                elif any(word in pattern for word in ['friend']):
+                    return 'FRIEND'
+                elif any(word in pattern for word in ['brother', 'sister']):
+                    return 'SIBLING'
+                elif any(word in pattern for word in ['colleague', 'works']):
+                    return 'COLLEAGUE'
+    
+    # Fall back to general pattern matching
     # Family relationships
     if any(word in fact_lower for word in ['married', 'husband', 'wife', 'spouse']):
         return 'SPOUSE'
@@ -208,28 +304,64 @@ def _determine_relationship_type(fact_text: str) -> str:
 def _extract_person_names_from_fact(fact_text: str, current_person: str) -> List[str]:
     """
     Extract potential person names from fact text.
-    This is a simple implementation - you may want to enhance with NLP.
+    Enhanced with more comprehensive patterns and smart relationship detection.
     """
-    # Common relationship indicators that suggest person names
+    # Enhanced relationship patterns that suggest person names
     relationship_patterns = [
+        # Direct relationship statements
         r'\b(?:married to|husband|wife|spouse|partner)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
-        r'\b(?:friend|brother|sister|sibling|cousin|uncle|aunt|nephew|niece)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
-        r'\b(?:works with|colleague|boss|manager)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+        r'\b(?:friend|friends with|buddy)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+        r'\b(?:brother|sister|sibling|cousin|uncle|aunt|nephew|niece)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+        r'\b(?:works with|colleague|coworker|boss|manager)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
         r'\b(?:son|daughter|child|parent|father|mother|dad|mom)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
-        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:is|are)\s+(?:my|his|her)\s+(?:friend|brother|sister|spouse|husband|wife)',
-        r'with\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
-        r'and\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+are\s+(?:married|dating|friends|siblings)'
+        
+        # Reverse patterns
+        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:is|are)\s+(?:my|his|her)\s+(?:friend|brother|sister|spouse|husband|wife|boss|colleague)',
+        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:and I|and me)\s+are\s+(?:friends|married|dating|siblings|colleagues)',
+        
+        # Context-based patterns
+        r'\bwith\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+        r'\band\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:are|is|were|was)',
+        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:is|are|was|were)\s+(?:a\s+)?(?:friend|colleague|neighbor)',
+        
+        # Meeting/activity patterns
+        r'\bmet\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+        r'\bsaw\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+        r'\bvisited\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+        r'\bcalled\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+        r'\btalked to\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+        
+        # Simple name mentions in relational context
+        r'(?:me and|I and)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',
+        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:and I|and me)',
+        
+        # Pattern for "X and Y are [relationship]" format
+        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+and\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:are|were)\s+(?:best\s+)?(?:friends|buddies|colleagues|married|dating|siblings)',
     ]
     
     potential_names = []
     for pattern in relationship_patterns:
-        matches = re.findall(pattern, fact_text, re.IGNORECASE)
+        matches = re.findall(pattern, fact_text)
         for match in matches:
-            name = match.strip()
-            # Avoid matching the current person and common non-names
-            if (name.lower() != current_person.lower() and 
-                len(name.split()) <= 3 and  # Reasonable name length
-                not any(word.lower() in ['the', 'and', 'or', 'with', 'in', 'at', 'on'] for word in name.split())):
-                potential_names.append(name)
+            if isinstance(match, tuple):
+                # Handle multiple groups in regex
+                for name in match:
+                    if name and name.strip():
+                        potential_names.append(name.strip())
+            else:
+                name = match.strip()
+                if name:
+                    potential_names.append(name)
     
-    return list(set(potential_names))  # Remove duplicates
+    # Filter and clean the names
+    filtered_names = []
+    for name in potential_names:
+        # Enhanced filtering
+        if (name.lower() != current_person.lower() and 
+            len(name.split()) <= 3 and  # Reasonable name length
+            len(name) > 1 and  # Not single characters
+            not any(word.lower() in ['the', 'and', 'or', 'with', 'in', 'at', 'on', 'is', 'are', 'was', 'were', 'my', 'his', 'her'] for word in name.split()) and
+            not name.lower() in ['today', 'yesterday', 'tomorrow', 'morning', 'evening', 'night', 'day']):  # Avoid time words
+            filtered_names.append(name)
+    
+    return list(set(filtered_names))  # Remove duplicates
