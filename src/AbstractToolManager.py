@@ -10,9 +10,9 @@ class AbstractPersonToolManager(ABC):
     
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
-        self._available_tools = self._get_available_tools()
+        self._available_tools = self.get_available_tools()
     
-    def _get_available_tools(self) -> List[str]:
+    def get_available_tools(self) -> List[str]:
         """Get list of all available tool names based on abstract methods."""
         abstract_methods = []
         for cls in inspect.getmro(self.__class__):
@@ -20,11 +20,7 @@ class AbstractPersonToolManager(ABC):
                 if hasattr(method, '__isabstractmethod__') and method.__isabstractmethod__:
                     if name not in abstract_methods:
                         abstract_methods.append(name)
-        return abstract_methods
-    
-    def get_available_tools(self) -> List[str]:
-        """Return list of available tool names."""
-        return self._available_tools.copy()
+        return abstract_methods.copy()
     
     def get_available_tools_detailed(self) -> str:
         """Use reflection to inspect all tool methods and return their details."""
@@ -157,14 +153,20 @@ class AbstractPersonToolManager(ABC):
         pass
     
     @abstractmethod
-    def get_all_people(self, include_relationships: bool = True) -> str:
+    def add_person_fact(self, person_id: str, fact_text: str, fact_type: str = "general") -> str:
         """
-        Retrieve all people from database with optional relationships.
-        Use for network overviews, contact lists, or relationship analysis.
+        Add categorized fact to person (stored as fact_1, fact_2, etc. up to fact_10).
+        
+        Fact types: "relationship", "personal", "professional", "interest", "contact", 
+        "background", "preference", "skill", "health", "general"
+        
+        CRITICAL: Always store relationship type as FIRST fact when adding new person.
+        Extract and store ALL mentioned information as separate facts.
         
         Examples:
-        get_all_people()  # Full network with relationships
-        get_all_people(include_relationships=False)  # Names only
+        - "my mom Sarah" → fact_text="mother", fact_type="relationship" (FIRST)
+        - "likes hiking" → fact_text="likes hiking", fact_type="interest"
+        - "works at Google" → fact_text="works at Google", fact_type="professional"
         """
         pass
     
@@ -186,87 +188,6 @@ class AbstractPersonToolManager(ABC):
         """
         pass
     
-    @abstractmethod
-    def delete_person(self, person_id: str = None, name: str = None) -> str:
-        """
-        Permanently delete person and all relationships/facts.
-        Cannot be undone. Consider alternatives like delete_all_facts_for_person.
-        
-        Examples:
-        delete_person(name="John Smith")  # Remove John completely
-        delete_person(person_id="12345")  # Remove by ID
-        """
-        pass
-    
-    # === PERSON FACT MANAGEMENT TOOLS ===
-    
-    @abstractmethod
-    def add_person_fact(self, person_id: str, fact_text: str, fact_type: str = "general") -> str:
-        """
-        Add categorized fact to person (stored as fact_1, fact_2, etc. up to fact_10).
-        
-        Fact types: "relationship", "personal", "professional", "interest", "contact", 
-        "background", "preference", "skill", "health", "general"
-        
-        CRITICAL: Always store relationship type as FIRST fact when adding new person.
-        Extract and store ALL mentioned information as separate facts.
-        
-        Examples:
-        - "my mom Sarah" → fact_text="mother", fact_type="relationship" (FIRST)
-        - "likes hiking" → fact_text="likes hiking", fact_type="interest"
-        - "works at Google" → fact_text="works at Google", fact_type="professional"
-        """
-        pass
-    
-    @abstractmethod
-    def delete_person_fact(self, person_id: str, fact_number: int) -> str:
-        """
-        Delete specific fact (1-10) from person while preserving other information.
-        Use for outdated info, corrections, or selective cleanup.
-        
-        Examples:
-        delete_person_fact("Sarah", 3)  # Remove Sarah's 3rd fact
-        delete_person_fact("John Smith", 1)  # Remove John's 1st fact
-        """
-        pass
-    
-    @abstractmethod
-    def delete_all_facts_for_person(self, person_id: str) -> str:
-        """
-        Clear all facts (fact_1 through fact_10) while keeping person in network.
-        Preserves person entry but removes all stored details.
-        
-        Examples:
-        delete_all_facts_for_person("Sarah")  # Clear all Sarah's facts
-        delete_all_facts_for_person("Mike Johnson")  # Fresh start for Mike
-        """
-        pass
-    
-    @abstractmethod
-    def get_facts_by_type(self, person_id: str = None, fact_type: str = None) -> str:
-        """
-        Retrieve facts filtered by type and/or person.
-        
-        Examples:
-        get_facts_by_type(fact_type="personal")  # All birthdays/personal info
-        get_facts_by_type(person_id="John", fact_type="interest")  # John's interests
-        get_facts_by_type(fact_type="relationship")  # All relationships
-        get_facts_by_type(person_id="Sarah")  # All Sarah's facts
-        """
-        pass
-    
-    @abstractmethod
-    def update_fact_type(self, person_id: str, fact_number: int, new_fact_type: str) -> str:
-        """
-        Update fact category without changing text content.
-        Use for recategorization, error correction, or better organization.
-        
-        Examples:
-        update_fact_type("Sarah", 3, "skill")  # Change fact 3 to skill type
-        update_fact_type("John", 2, "professional")  # Recategorize as professional
-        """
-        pass
-
     @abstractmethod
     def search(self, query: str) -> str:
         """

@@ -57,6 +57,7 @@ Use the fact storage system to track:
 - Recent life events and changes
 - Communication preferences and patterns
 - Shared experiences and memories
+- Psychological characteristics and traits
 - Goals, challenges, and aspirations
 - Geographic location and travel
 - Health updates or concerns (when appropriate)
