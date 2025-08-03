@@ -217,6 +217,9 @@ class GraphPersonManager(AbstractPersonToolManager):
         """Update the type of a specific fact."""
         return update_fact_type.run(self.driver, fact_number, new_fact_type)
     
+    def search(self, query_text: str) -> str:
+        return search_facts.run(self.driver, query_text)
+
     def search_facts_text(self, query_text: str, person_name: str = None) -> str:
         """
         Search for facts using full-text search.

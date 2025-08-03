@@ -85,6 +85,7 @@ def call_gemini_llm(user_query: str, chat_history: list, client, system_prompt: 
                         try:
                             tool_output = tool_manager.execute_tool(tool["name"], tool.get("parameters", {}))
                             print(f"\n✅ Tool '{tool['name']}' executed. Output: {tool_output}")
+                            print(tool_output['result'])
                             chat_history.append({
                                 "role": "assistant",
                                 "content": f"Executed tool '{tool['name']}' with result: {tool_output}"

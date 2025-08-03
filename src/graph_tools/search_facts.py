@@ -10,12 +10,230 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import logging
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
  # Initialize the sentence transformer model for embeddings
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 embedding_dimension = 384  # Dimension for all-MiniLM-L6-v2
+
+def run(driver, search_string: str, top_k: int = 10, 
+        include_facts: bool = True, min_fact_matches: int = 1) -> str:
+    """
+    Main search method that queries the entire database to find people that match the search string.
+    Uses hybrid search across all facts and re-ranks results by person relevance.
+    
+    Args:
+        search_string: Text to search for
+        top_k: Number of top people to return
+        include_facts: Whether to include matching facts in results
+        min_fact_matches: Minimum number of fact matches required for a person to be included
+        
+    Returns:
+        JSON string with ranked people and their matching facts
+    """
+    try:
+        # Use hybrid search to get all matching facts
+        hybrid_results_str = text_vector_hybrid(
+            driver, search_string, 
+            top_k=50,  # Get more facts to ensure we capture all relevant people
+            vector_weight=0.6, 
+            text_weight=0.4,
+            similarity_threshold=0.15
+        )
+        
+        # Parse hybrid search results
+        hybrid_data = json.loads(hybrid_results_str.replace("Hybrid search results: ", ""))
+        matching_facts = hybrid_data.get('results', [])
+        
+        if not matching_facts:
+            return f"No people found matching search string: '{search_string}'"
+        
+        # Group facts by person and calculate person-level scores
+        person_scores = defaultdict(lambda: {
+            'facts': [],
+            'total_hybrid_score': 0.0,
+            'max_hybrid_score': 0.0,
+            'avg_hybrid_score': 0.0,
+            'fact_count': 0,
+            'vector_score_sum': 0.0,
+            'text_score_sum': 0.0
+        })
+        
+        for fact in matching_facts:
+            person_name = fact['person_name']
+            person_data = person_scores[person_name]
+            
+            person_data['facts'].append(fact)
+            person_data['total_hybrid_score'] += fact['hybrid_score']
+            person_data['max_hybrid_score'] = max(person_data['max_hybrid_score'], fact['hybrid_score'])
+            person_data['fact_count'] += 1
+            person_data['vector_score_sum'] += fact.get('vector_score', 0.0)
+            person_data['text_score_sum'] += fact.get('text_score', 0.0)
+        
+        # Calculate final person scores and filter by minimum fact matches
+        ranked_people = []
+        for person_name, data in person_scores.items():
+            if data['fact_count'] < min_fact_matches:
+                continue
+                
+            data['avg_hybrid_score'] = data['total_hybrid_score'] / data['fact_count']
+            data['avg_vector_score'] = data['vector_score_sum'] / data['fact_count']
+            data['avg_text_score'] = data['text_score_sum'] / data['fact_count']
+            
+            # Calculate final person relevance score (weighted combination)
+            person_relevance_score = (
+                0.4 * data['max_hybrid_score'] +           # Best single match
+                0.3 * data['avg_hybrid_score'] +           # Average quality
+                0.2 * min(data['fact_count'] / 5.0, 1.0) + # Quantity bonus (capped)
+                0.1 * data['total_hybrid_score']           # Total relevance
+            )
+            
+            person_result = {
+                'person_name': person_name,
+                'relevance_score': person_relevance_score,
+                'matching_facts_count': data['fact_count'],
+                'max_fact_score': data['max_hybrid_score'],
+                'avg_fact_score': data['avg_hybrid_score'],
+                'avg_vector_score': data['avg_vector_score'],
+                'avg_text_score': data['avg_text_score']
+            }
+            
+            # Include facts if requested
+            if include_facts:
+                # Sort facts by hybrid score and include top ones
+                sorted_facts = sorted(data['facts'], 
+                                    key=lambda x: x['hybrid_score'], 
+                                    reverse=True)
+                person_result['matching_facts'] = sorted_facts[:5]  # Top 5 facts per person
+            
+            ranked_people.append(person_result)
+        
+        # Sort people by relevance score
+        ranked_people.sort(key=lambda x: x['relevance_score'], reverse=True)
+        top_people = ranked_people[:top_k]
+        
+        # Prepare final results in readable format
+        readable_results = []
+        for person in top_people:
+            person_result = {
+                'name': person['person_name'],
+                'relevance_score': round(person['relevance_score'], 3),
+                'matching_facts_count': person['matching_facts_count']
+            }
+            
+            if include_facts and 'matching_facts' in person:
+                person_result['facts'] = []
+                for fact in person['matching_facts']:
+                    fact_info = {
+                        'text': fact['fact_text'],
+                        'type': fact.get('fact_type', 'general'),
+                        'score': round(fact['hybrid_score'], 3),
+                        'created': fact.get('created_at', 'unknown')
+                    }
+                    person_result['facts'].append(fact_info)
+            
+            readable_results.append(person_result)
+        
+        search_summary = {
+            'search_query': search_string,
+            'results_summary': {
+                'total_people_found': len(ranked_people),
+                'people_returned': len(top_people),
+                'total_facts_analyzed': len(matching_facts)
+            },
+            'people': readable_results
+        }
+        
+        return format_results_as_text(json.dumps(search_summary, indent=2, default=str))
+        
+    except Exception as e:
+        logger.error(f"Error in run method: {e}")
+        return f"Error searching for people: {str(e)}"
+
+def format_results_as_text(json_results: str) -> str:
+    """
+    Converts JSON search results to readable text format.
+    
+    Args:
+        json_results: JSON string from the run() method
+        
+    Returns:
+        Formatted text string with person names and their facts
+    """
+    try:
+        # Parse the JSON results
+        data = json.loads(json_results)
+        
+        # Start building the text output
+        text_output = ["**** RESULTS ****\n"]
+        
+        # Add summary information
+        summary = data.get('results_summary', {})
+        search_query = data.get('search_query', 'Unknown')
+        
+        text_output.append(f"Search Query: {search_query}")
+        text_output.append(f"People Found: {summary.get('people_returned', 0)} of {summary.get('total_people_found', 0)}")
+        text_output.append(f"Total Facts Analyzed: {summary.get('total_facts_analyzed', 0)}")
+        text_output.append("\n" + "="*50 + "\n")
+        
+        # Format each person and their facts
+        people = data.get('people', [])
+        
+        if not people:
+            text_output.append("No matching people found.")
+        else:
+            for i, person in enumerate(people, 1):
+                name = person.get('name', 'Unknown')
+                relevance_score = person.get('relevance_score', 0)
+                facts_count = person.get('matching_facts_count', 0)
+                
+                # Person header with ranking and score
+                text_output.append(f"{i}. {name}")
+                text_output.append(f"   (Relevance: {relevance_score}, Facts: {facts_count})")
+                
+                # Add facts if they exist
+                facts = person.get('facts', [])
+                if facts:
+                    for fact in facts:
+                        fact_text = fact.get('text', 'No text available')
+                        fact_type = fact.get('type', 'general')
+                        fact_score = fact.get('score', 0)
+                        
+                        # Format: tab + fact text + (type, score)
+                        text_output.append(f"\t{fact_text}")
+                        text_output.append(f"\t  [{fact_type.upper()}, score: {fact_score}]")
+                else:
+                    text_output.append("\tNo specific facts available")
+                
+                # Add separator between people (except for the last one)
+                if i < len(people):
+                    text_output.append("\n" + "-"*30 + "\n")
+        
+        return "\n".join(text_output)
+        
+    except json.JSONDecodeError as e:
+        return f"**** RESULTS ****\n\nError: Invalid JSON format - {str(e)}"
+    except Exception as e:
+        return f"**** RESULTS ****\n\nError formatting results: {str(e)}"
+
+def run_and_format_text(driver, search_string: str, top_k: int = 10, 
+                       include_facts: bool = True, min_fact_matches: int = 1) -> str:
+    """
+    Convenience method that runs the search and returns formatted text results.
+    
+    Args:
+        search_string: Text to search for
+        top_k: Number of top people to return
+        include_facts: Whether to include matching facts in results
+        min_fact_matches: Minimum number of fact matches required
+        
+    Returns:
+        Formatted text string with search results
+    """
+    json_results = run(driver, search_string, top_k, include_facts, min_fact_matches)
+    return format_results_as_text(json_results)
 
 def vector(driver, query_text: str, top_k: int = 5, similarity_threshold: float = 0.3) -> str:
     """

@@ -171,13 +171,18 @@ class AbstractPersonToolManager(ABC):
     @abstractmethod
     def get_person(self, name: str = None, person_id: str = None, include_relationships: bool = True) -> str:
         """
-        Find specific person(s) by name or ID with partial matching.
+        Find specific person(s) by name with partial matching.
         Use before adding facts or for contact verification.
         
+        Run when asked:
+        What information do you have on <person name>?
+        Give me information on <person name>?
+        What do you know about <person name>?
+        Who is <person name>?
+
         Examples:
         get_person(name="Smith")  # Find anyone with "Smith" in name
         get_person(name="Sarah", include_relationships=True)  # Full Sarah profile
-        get_person(person_id="12345")  # Specific person by ID
         """
         pass
     
@@ -259,5 +264,32 @@ class AbstractPersonToolManager(ABC):
         Examples:
         update_fact_type("Sarah", 3, "skill")  # Change fact 3 to skill type
         update_fact_type("John", 2, "professional")  # Recategorize as professional
+        """
+        pass
+
+    @abstractmethod
+    def search(self, query_text: str) -> str:
+        """
+        Search for people in the database based on various criteria.
+        
+        This function can handle different types of queries:
+        - Direct name searches: "Marcus", "Sarah"
+        - Descriptive queries: "who is the person that works at Google?"
+        - Interest-based queries: "who likes pizza?", "who enjoys hiking?"
+        - Location-based queries: "where do people like to go?", "who visits museums?"
+        - Any text that might match person names, properties, facts, or relationships
+        
+        The search will look through:
+        - Person names (fuzzy matching)
+        - Person properties 
+        - Connected facts and entities
+        - Relationship information
+        
+        Args:
+            driver: Neo4j driver instance
+            query_text: Search string or phrase - can be a name or descriptive query
+            
+        Returns:
+            JSON string with found people and their information
         """
         pass
