@@ -54,7 +54,7 @@ def _flatten_properties(properties: Dict[str, Any], prefix: str = "", separator:
             
             if isinstance(value, dict):
                 # Recursively flatten nested dictionaries
-                nested_flattened = self._flatten_properties(value, new_key, separator)
+                nested_flattened = _flatten_properties(value, new_key, separator)
                 flattened.update(nested_flattened)
             elif isinstance(value, (list, tuple)):
                 # Convert lists/tuples to strings or handle as needed

@@ -119,16 +119,16 @@ def run(driver, person_id: str, fact_text: str, fact_type: str = "general") -> s
         
         # Handle inter-person relationships - ENHANCED VERSION
         for potential_name in potential_person_names:
-            # Check if this person exists in the graph, if not create them
-            person_exists_query = """
+            # ENHANCED: Find ALL existing persons with this name (to handle multiple nodes with same name)
+            existing_persons_query = """
             MATCH (other:Person {name: $potential_name})
-            RETURN other.name as name
+            RETURN other.name as name, id(other) as node_id
             """
             
-            existing_person = session.run(person_exists_query, potential_name=potential_name).single()
+            existing_persons = session.run(existing_persons_query, potential_name=potential_name).data()
             
-            if not existing_person:
-                # Create the new person if they don't exist
+            if not existing_persons:
+                # Create the new person if none exist
                 session.run("""
                     CREATE (p:Person {
                         name: $potential_name,
@@ -136,30 +136,46 @@ def run(driver, person_id: str, fact_text: str, fact_type: str = "general") -> s
                     })
                 """, potential_name=potential_name, created_at=datetime.now().isoformat())
                 logger.info(f"Created new person from relationship: {potential_name}")
+                
+                # Add to list for relationship creation
+                existing_persons = [{'name': potential_name, 'node_id': None}]
             
             # Determine relationship type
             relationship_type = _determine_relationship_type(fact_text, potential_name)
             
-            # Create bidirectional relationship (only if not already exists)
-            create_relationship_query = """
-            MATCH (p1:Person {name: $person_id})
-            MATCH (p2:Person {name: $other_person})
-            MERGE (p1)-[r1:RELATED_TO {relationship_type: $relationship_type}]->(p2)
-            ON CREATE SET r1.via_fact = $fact_id, r1.created_at = $created_at
-            MERGE (p2)-[r2:RELATED_TO {relationship_type: $relationship_type}]->(p1)
-            ON CREATE SET r2.via_fact = $fact_id, r2.created_at = $created_at
-            RETURN p2.name as connected_person
-            """
+            # ENHANCED: Create relationships with ALL existing persons with this name
+            connections_made = 0
+            for person_record in existing_persons:
+                # Create bidirectional relationship (MERGE prevents duplicates)
+                create_relationship_query = """
+                MATCH (p1:Person {name: $person_id})
+                MATCH (p2:Person {name: $other_person})
+                MERGE (p1)-[r1:RELATED_TO {relationship_type: $relationship_type}]->(p2)
+                ON CREATE SET r1.via_fact = $fact_id, r1.created_at = $created_at
+                ON MATCH SET r1.last_confirmed = $created_at
+                MERGE (p2)-[r2:RELATED_TO {relationship_type: $relationship_type}]->(p1)
+                ON CREATE SET r2.via_fact = $fact_id, r2.created_at = $created_at
+                ON MATCH SET r2.last_confirmed = $created_at
+                RETURN p2.name as connected_person
+                """
+                
+                result = session.run(create_relationship_query,
+                                    person_id=person_id,
+                                    other_person=potential_name,
+                                    relationship_type=relationship_type,
+                                    fact_id=fact_id,
+                                    created_at=datetime.now().isoformat())
+                
+                if result.single():
+                    connections_made += 1
             
-            result = session.run(create_relationship_query,
-                                person_id=person_id,
-                                other_person=potential_name,
-                                relationship_type=relationship_type,
-                                fact_id=fact_id,
-                                created_at=datetime.now().isoformat())
-            
-            if result.single():
-                people_connected.append(f"{potential_name} ({relationship_type})")
+            # Report connections made
+            if connections_made > 0:
+                status = "[existing]" if len(existing_persons) > 0 and existing_persons[0]['node_id'] is not None else "[new]"
+                connection_info = f"{potential_name} ({relationship_type}) {status}"
+                if connections_made > 1:
+                    connection_info += f" [{connections_made} nodes]"
+                people_connected.append(connection_info)
         
         # SPECIAL HANDLING: If fact is just a relationship type (like "best friend") 
         # and no person names were extracted, look for recent similar facts
@@ -179,7 +195,6 @@ def run(driver, person_id: str, fact_text: str, fact_type: str = "general") -> s
             LIMIT 5
             """
             
-            recent_time = datetime.now().replace(microsecond=0).isoformat()[:-3] + "Z"  # Last minute
             recent_time = datetime.now().replace(second=0, microsecond=0).isoformat()  # Last minute
             
             similar_facts = session.run(similar_facts_query,
@@ -193,27 +208,47 @@ def run(driver, person_id: str, fact_text: str, fact_type: str = "general") -> s
                 other_person = fact_record['other_person']
                 relationship_type = _determine_relationship_type(fact_text)
                 
-                # Create bidirectional relationship
-                auto_relationship_query = """
-                MATCH (p1:Person {name: $person_id})
-                MATCH (p2:Person {name: $other_person})
-                MERGE (p1)-[r1:RELATED_TO {relationship_type: $relationship_type}]->(p2)
-                ON CREATE SET r1.via_fact = $fact_id, r1.created_at = $created_at, r1.auto_detected = true
-                MERGE (p2)-[r2:RELATED_TO {relationship_type: $relationship_type}]->(p1)
-                ON CREATE SET r2.via_fact = $fact_id, r2.created_at = $created_at, r2.auto_detected = true
-                RETURN p2.name as connected_person
+                # ENHANCED: Find all persons with this name and connect to all of them
+                all_matching_persons_query = """
+                MATCH (other:Person {name: $other_person})
+                RETURN other.name as name, id(other) as node_id
                 """
                 
-                result = session.run(auto_relationship_query,
-                                    person_id=person_id,
-                                    other_person=other_person,
-                                    relationship_type=relationship_type,
-                                    fact_id=fact_id,
-                                    created_at=datetime.now().isoformat())
+                all_matching = session.run(all_matching_persons_query, other_person=other_person).data()
                 
-                if result.single():
-                    people_connected.append(f"{other_person} ({relationship_type}) [auto-detected]")
-                    logger.info(f"Auto-detected relationship: {person_id} -> {other_person} ({relationship_type})")
+                connections_made = 0
+                for person_match in all_matching:
+                    # Create bidirectional relationship
+                    auto_relationship_query = """
+                    MATCH (p1:Person {name: $person_id})
+                    MATCH (p2:Person {name: $other_person})
+                    WHERE id(p2) = $target_node_id
+                    MERGE (p1)-[r1:RELATED_TO {relationship_type: $relationship_type}]->(p2)
+                    ON CREATE SET r1.via_fact = $fact_id, r1.created_at = $created_at, r1.auto_detected = true
+                    ON MATCH SET r1.last_confirmed = $created_at
+                    MERGE (p2)-[r2:RELATED_TO {relationship_type: $relationship_type}]->(p1)
+                    ON CREATE SET r2.via_fact = $fact_id, r2.created_at = $created_at, r2.auto_detected = true
+                    ON MATCH SET r2.last_confirmed = $created_at
+                    RETURN p2.name as connected_person
+                    """
+                    
+                    result = session.run(auto_relationship_query,
+                                        person_id=person_id,
+                                        other_person=other_person,
+                                        target_node_id=person_match['node_id'],
+                                        relationship_type=relationship_type,
+                                        fact_id=fact_id,
+                                        created_at=datetime.now().isoformat())
+                    
+                    if result.single():
+                        connections_made += 1
+                
+                if connections_made > 0:
+                    connection_info = f"{other_person} ({relationship_type}) [auto-detected]"
+                    if connections_made > 1:
+                        connection_info += f" [{connections_made} nodes]"
+                    people_connected.append(connection_info)
+                    logger.info(f"Auto-detected relationship: {person_id} -> {other_person} ({relationship_type}) - {connections_made} connections")
         
         # Format response
         response = f"Added {fact_type} fact to person '{person_id}': {fact_text}"

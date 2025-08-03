@@ -177,7 +177,7 @@ class GraphPersonManager(AbstractPersonToolManager):
     
     def get_person(self, name: str = None, person_id: str = None, include_relationships: bool = True) -> str:
         """Retrieve specific person(s) from the graph."""
-        return get_person.run(self.driver, include_relationships)
+        return get_person.run(self.driver, name, person_id, include_relationships)
     
     def delete_person(self, person_id: str = None, name: str = None) -> str:
         """Delete a person and all their relationships from the graph."""
