@@ -26,7 +26,7 @@ class AbstractPersonToolManager(ABC):
         """Return list of available tool names."""
         return self._available_tools.copy()
     
-    def inspect_tools(self) -> str:
+    def get_available_tools_detailed(self) -> str:
         """Use reflection to inspect all tool methods and return their details."""
         tool_details = []
         tool_details.append("=" * 80)
@@ -268,11 +268,11 @@ class AbstractPersonToolManager(ABC):
         pass
 
     @abstractmethod
-    def search(self, query_text: str) -> str:
+    def search(self, query: str) -> str:
         """
         Search for people in the database based on various criteria.
         
-        This function can handle different types of queries:
+        This function can handle different types of queries and finds people based on interests or facts:
         - Direct name searches: "Marcus", "Sarah"
         - Descriptive queries: "who is the person that works at Google?"
         - Interest-based queries: "who likes pizza?", "who enjoys hiking?"
@@ -287,7 +287,7 @@ class AbstractPersonToolManager(ABC):
         
         Args:
             driver: Neo4j driver instance
-            query_text: Search string or phrase - can be a name or descriptive query
+            query: Search string or phrase - can be a name or descriptive query
             
         Returns:
             JSON string with found people and their information

@@ -217,22 +217,22 @@ class GraphPersonManager(AbstractPersonToolManager):
         """Update the type of a specific fact."""
         return update_fact_type.run(self.driver, fact_number, new_fact_type)
     
-    def search(self, query_text: str) -> str:
-        return search_facts.run(self.driver, query_text)
+    def search(self, query: str) -> str:
+        return search_facts.run(self.driver, query)
 
-    def search_facts_text(self, query_text: str, person_name: str = None) -> str:
+    def search_facts_text(self, query: str, person_name: str = None) -> str:
         """
         Search for facts using full-text search.
         
         Args:v
-            query_text: Text to search for
+            query: Text to search for
             person_name: Optional person name to filter results
             
         Returns:
             JSON string with search results
         """
 
-        return search_facts.text(self.driver, query_text, person_name)
+        return search_facts.text(self.driver, query, person_name)
 
     def search_facts_hybrid(self, query_text: str, top_k: int = 10, 
                            vector_weight: float = 0.7, text_weight: float = 0.3,

@@ -4,10 +4,13 @@ import argparse
 from google import genai
 from ToolManager import ExamplePersonToolManager
 from GraphPersonManager import GraphPersonManager
+from PromptManager import PromptManager
 import logging
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+prompt_manager = PromptManager()
 
 # --- Gemini API Setup ---
 def setup_gemini_api():
@@ -86,6 +89,11 @@ def call_gemini_llm(user_query: str, chat_history: list, client, system_prompt: 
                             tool_output = tool_manager.execute_tool(tool["name"], tool.get("parameters", {}))
                             print(f"\n✅ Tool '{tool['name']}' executed. Output: {tool_output}")
                             print(tool_output['result'])
+                            if 'name' in tool and tool['name'] == 'search' :
+                                #format the results with the llm
+                                output = run_single_prompt(prompt_manager.get_prompt("search_filter", {"search_results" : tool_output['result']}), None, client, None, retry_count=1)
+                                print(output)
+
                             chat_history.append({
                                 "role": "assistant",
                                 "content": f"Executed tool '{tool['name']}' with result: {tool_output}"
@@ -146,7 +154,7 @@ Type 'exit' to quit.
             chat_history.append({"role": "user", "content": user_input})
 
             # Call LLM with retry logic
-            result = call_gemini_llm(user_input, chat_history, client, system_prompt, tool_manager, is_chat_mode=True)
+            result = call_gemini_llm(user_input, chat_history, client, system_prompt, tool_manager, is_chat_mode=True, max_retries=3)
 
             if result["type"] == "text":
                 # Response already printed inside the function
@@ -166,7 +174,7 @@ Type 'exit' to quit.
             print(f"❌ An error occurred: {e}")
             logging.error(f"Main loop error: {e}", exc_info=True)
 
-def run_single_prompt(prompt, tool_manager, client, system_prompt):
+def run_single_prompt(prompt, tool_manager, client, system_prompt, retry_count=3):
     """Run a single prompt and execute any tool calls automatically."""
     chat_history = []
     
@@ -176,7 +184,7 @@ def run_single_prompt(prompt, tool_manager, client, system_prompt):
     chat_history.append({"role": "user", "content": prompt})
     
     # Call LLM with retry logic
-    result = call_gemini_llm(prompt, chat_history, client, system_prompt, tool_manager, is_chat_mode=False)
+    result = call_gemini_llm(prompt, chat_history, client, system_prompt, tool_manager, is_chat_mode=False, max_retries=retry_count)
     
     if result["type"] == "tool_call_complete":
         print("\n✅ All tool calls completed successfully.")
@@ -235,34 +243,7 @@ def main():
         return
 
     # Setup system prompt
-    system_prompt = f"""You are an AI assistant that can execute tools to help users accomplish tasks.
-
-Available tools: {', '.join(tool_manager.get_available_tools())}
-
-Tool descriptions:
-{tool_manager.inspect_tools()}
-
-When you need to use tools, respond with JSON in this format:
-{{
-    "response": "Your explanation of what you're going to do",
-    "tool_calls": [
-        {{
-            "name": "tool_name",
-            "parameters": {{"param1": "value1", "param2": "value2"}}
-        }}
-    ]
-}}
-
-If you don't need to use any tools, respond with JSON in this format:
-{{
-    "response": "Your response to the user"
-}}
-"""
-
-    # Save system prompt to file (optional)
-    file_name = 'system_prompt.md'
-    with open(file_name, 'w', encoding='utf-8') as md_file:
-        md_file.write(system_prompt)
+    system_prompt = prompt_manager.get_prompt("system", {"tool_function_descriptions" : tool_manager.get_available_tools_detailed()})
 
     try:
         if args.chat:
