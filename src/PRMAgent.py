@@ -6,6 +6,8 @@ from ToolManager import ExamplePersonToolManager
 from GraphPersonManager import GraphPersonManager
 from PromptManager import PromptManager
 import logging
+import base64
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,9 +23,47 @@ def setup_gemini_api():
     client = genai.Client()
     return client
 
+# --- Image processing functions ---
+def validate_image_file(image_path):
+    """Validate that the image file exists and has a supported format."""
+    if not os.path.exists(image_path):
+        raise FileNotFoundError(f"Image file not found: {image_path}")
+    
+    supported_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+    file_extension = Path(image_path).suffix.lower()
+    
+    if file_extension not in supported_extensions:
+        raise ValueError(f"Unsupported image format: {file_extension}. Supported formats: {', '.join(supported_extensions)}")
+    
+    return True
+
+def encode_image_to_base64(image_path):
+    """Encode image file to base64 string."""
+    try:
+        with open(image_path, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+        return encoded_string
+    except Exception as e:
+        raise Exception(f"Failed to encode image: {e}")
+
+def get_image_mime_type(image_path):
+    """Get MIME type for the image file."""
+    extension = Path(image_path).suffix.lower()
+    mime_types = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp'
+    }
+    return mime_types.get(extension, 'image/jpeg')
+
 # --- Call Gemini and parse response ---
-def call_gemini_llm(user_query: str, chat_history: list, client, system_prompt: str = None, tool_manager=None, is_chat_mode=True, max_retries=3):
+def call_gemini_llm(user_query: str, chat_history: list, client, system_prompt: str = None, tool_manager=None, is_chat_mode=True, max_retries=3, image_path=None):
     logging.info(f"Calling Gemini LLM with query: '{user_query}'")
+    
+    if image_path:
+        logging.info(f"Including image: {image_path}")
 
     for attempt in range(max_retries):
         try:
@@ -41,11 +81,37 @@ def call_gemini_llm(user_query: str, chat_history: list, client, system_prompt: 
 
             full_context += f"User: {user_query}\nAssistant:"
 
+            # Prepare the content for the API call
+            if image_path:
+                # Validate and encode the image
+                validate_image_file(image_path)
+                image_base64 = encode_image_to_base64(image_path)
+                mime_type = get_image_mime_type(image_path)
+                
+                # Create multimodal content
+                contents = [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {"text": full_context},
+                            {
+                                "inline_data": {
+                                    "mime_type": mime_type,
+                                    "data": image_base64
+                                }
+                            }
+                        ]
+                    }
+                ]
+            else:
+                # Text-only content
+                contents = full_context
+
             # Make the API call
             logging.info(f"Making Gemini API call - attempt {attempt + 1}/{max_retries}")
             response = client.models.generate_content(
-                model="gemma-3n-e4b-it",
-                contents=full_context
+                model="gemma-3-4b-it",
+                contents=contents
             )
 
             llm_content = response.text.strip()
@@ -174,32 +240,41 @@ Type 'exit' to quit.
             print(f"❌ An error occurred: {e}")
             logging.error(f"Main loop error: {e}", exc_info=True)
 
-def run_single_prompt(prompt, tool_manager, client, system_prompt, retry_count=3):
+def run_single_prompt(prompt, tool_manager, client, system_prompt, retry_count=3, image_path=None):
     """Run a single prompt and execute any tool calls automatically."""
     chat_history = []
     
-    print(f"🚀 Processing prompt: {prompt}")
+    if image_path:
+        print(f"🚀 Processing prompt with image: {prompt} (Image: {image_path})")
+    else:
+        print(f"🚀 Processing prompt: {prompt}")
     
     # Add to chat history
     chat_history.append({"role": "user", "content": prompt})
     
     # Call LLM with retry logic
-    result = call_gemini_llm(prompt, chat_history, client, system_prompt, tool_manager, is_chat_mode=False, max_retries=retry_count)
+    result = call_gemini_llm(prompt, chat_history, client, system_prompt, tool_manager, is_chat_mode=False, max_retries=retry_count, image_path=image_path)
     
     if result["type"] == "tool_call_complete":
         print("\n✅ All tool calls completed successfully.")
     elif result["type"] == "text":
         print("📄 No tool calls were needed.")
+        return result["content"]
     else:
         print("⚠️ Unexpected response type.")
 
 def parse_arguments():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="LLM Tool Demo")
+    parser = argparse.ArgumentParser(description="LLM Tool Demo with Image Support")
     parser.add_argument(
         "--chat", 
         action="store_true", 
         help="Run in interactive chat mode"
+    )
+    parser.add_argument(
+        "--image", 
+        type=str,
+        help="Path to image file (PNG, JPEG, GIF, WebP) to process with the prompt"
     )
     parser.add_argument(
         "prompt",
@@ -216,6 +291,12 @@ def parse_arguments():
     if args.chat and args.prompt:
         parser.error("Cannot use both --chat flag and prompt argument")
     
+    if args.chat and args.image:
+        parser.error("Image input is not supported in chat mode")
+    
+    if args.image and not args.prompt:
+        parser.error("Image input requires a prompt to be provided")
+    
     return args
 
 # --- Main function ---
@@ -224,6 +305,15 @@ def main():
     args = parse_arguments()
     
     print("🚀 Starting LLM + Tooling Demo...")
+    
+    # Validate image file if provided
+    if args.image:
+        try:
+            validate_image_file(args.image)
+            print(f"✅ Image file validated: {args.image}")
+        except (FileNotFoundError, ValueError) as e:
+            print(f"❌ Image validation error: {e}")
+            return
     
     # Initialize tool manager
     try:
@@ -249,7 +339,7 @@ def main():
         if args.chat:
             run_chat_mode(tool_manager, client, system_prompt)
         else:
-            run_single_prompt(args.prompt, tool_manager, client, system_prompt)
+            run_single_prompt(args.prompt, tool_manager, client, system_prompt, image_path=args.image)
     finally:
         # Clean up
         try:
