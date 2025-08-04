@@ -207,7 +207,6 @@ class AbstractPersonToolManager(ABC):
         - Relationship information
         
         Args:
-            driver: Neo4j driver instance
             query: Search string or phrase - can be a name or descriptive query
             
         Returns:

@@ -298,6 +298,7 @@ def call_gemini_llm(user_query: str, chat_history: list, client, system_prompt: 
                                 #format the results with the llm
                                 output = run_single_prompt(prompt_manager.get_prompt("search_filter", {"search_results" : tool_output['result']}), None, client, None, retry_count=1)
                                 print(output)
+                                tool_output['result'] = output
 
                             chat_history.append({
                                 "role": "assistant",
