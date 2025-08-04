@@ -18,5 +18,16 @@ Consider the person's interests, psychological profile if you can deduce one, ba
 
 Just return the summary of your assement and the better alternative phrasings from your analysis. Alternative phrasings should
 capture the underlying belief/tenor of the original message but custom to the person.
-Return well formed and readable markdown  that has
+Return well formed and readable json that has
 the assement text and a list of alternate phrase strings with their classifications in parentheses ie. "<alternate phrase> (rationale/classification)".
+
+### RESPONSE FORMAT: You must ALWAYS respond with a JSON object in the following format:
+```json
+{
+  "response": "<your natural language assessment here>",
+  "original_message" : "<original Message here>",
+  "alternative_messages": [
+    "<alternative Message> (rationale/classification)" 
+  ]
+}
+```
