@@ -211,8 +211,8 @@ def main():
         st.warning("Please set GEMINI_API_KEY environment variable or configure your API key in the sidebar to get started.")
         return
     
-    # Main interface tabs (added People Database tab)
-    tab1, tab2, tab3 = st.tabs(["💬 Chat Mode", "⚡ One-Shot Prompts", "👥 People Database"])
+    # Main interface tabs (added Custom Chat tab)
+    tab1, tab2, tab3, tab4 = st.tabs(["💬 Chat Mode", "⚡ One-Shot Prompts", "👥 People Database", "🎯 Custom Chat"])
     
     with tab1:
         st.header("Chat Mode")
@@ -508,6 +508,160 @@ def main():
         
         else:
             st.warning("Please configure your API key first to view the people database.")
+    
+    with tab4:
+        st.header("Custom Chat Analysis")
+        st.write("Analyze your conversation with specific people from your database to get suggestions on how to communicate more effectively.")
+        
+        if st.session_state.api_initialized:
+            # Get list of people for dropdown
+            with st.spinner("Loading people list..."):
+                try:
+                    people_data_result = st.session_state.tool_manager.get_all_people(include_relationships=True)
+                    
+                    if "People data: " in people_data_result:
+                        json_start = people_data_result.find('People data: ') + len('People data: ')
+                        json_data = people_data_result[json_start:]
+                        people_data = json.loads(json_data)
+                        
+                        if people_data:
+                            # Create dropdown options
+                            people_options = ["Select a person..."] + [person.get('name', 'Unknown') for person in people_data]
+                            
+                            # Person selection dropdown
+                            selected_person = st.selectbox(
+                                "👤 Select person to analyze conversation with:",
+                                options=people_options,
+                                key="custom_chat_person"
+                            )
+                            
+                            if selected_person != "Select a person...":
+                                # Find the selected person's data
+                                person_data = next((p for p in people_data if p.get('name') == selected_person), None)
+                                
+                                if person_data:
+                                    # Show person info in an expander
+                                    with st.expander(f"ℹ️ About {selected_person}", expanded=False):
+                                        # Display person's facts for context
+                                        facts = person_data.get('facts', [])
+                                        if facts:
+                                            st.write("**Known facts about this person:**")
+                                            for i, fact in enumerate(facts, 1):
+                                                fact_text = fact.get('text', 'No text')
+                                                fact_type = fact.get('type', 'general')
+                                                
+                                                # Color code by fact type
+                                                type_colors = {
+                                                    'work': '🔵',
+                                                    'hobby': '🟢', 
+                                                    'relationship': '❤️',
+                                                    'volunteer': '🟡',
+                                                    'general': '⚪'
+                                                }
+                                                type_icon = type_colors.get(fact_type, '⚪')
+                                                
+                                                st.write(f"{type_icon} {fact_text}")
+                                        else:
+                                            st.write("No facts available for this person.")
+                                    
+                                    st.markdown("---")
+                                    
+                                    # Input fields for conversation analysis
+                                    st.subheader("📝 Conversation Analysis")
+                                    
+                                    # Previous conversation context
+                                    previous_conversation = st.text_area(
+                                        "📜 Previous conversation context:",
+                                        height=150,
+                                        placeholder="Paste the previous conversation or context here...",
+                                        help="Include any relevant conversation history to provide context for the analysis.",
+                                        key="previous_conversation"
+                                    )
+                                    
+                                    # Your next message
+                                    your_message = st.text_area(
+                                        "💬 Your next message:",
+                                        height=100,
+                                        placeholder="Type the message you want to send...",
+                                        help="Enter the message you're planning to send and get suggestions for improvement.",
+                                        key="your_message"
+                                    )
+                                    
+                                    # Analyze button
+                                    if st.button("🔍 Analyze", key="analyze_conversation", type="primary", use_container_width=True):
+                                        if your_message.strip():
+                                            # Create analysis prompt
+                                            person_facts = "\n".join([f"- {fact.get('text', '')}" for fact in facts])
+                                            
+                                            analysis_prompt = f"""
+You are a communication expert helping someone improve their conversation with a specific person. 
+
+**Person:** {selected_person}
+
+**What I know about {selected_person}:**
+{person_facts if person_facts else "No specific information available."}
+
+**Previous conversation context:**
+{previous_conversation if previous_conversation.strip() else "No previous context provided."}
+
+**My planned message:**
+"{your_message}"
+
+Please analyze my planned message and provide alternative phrasings to say the same thing based on what we know about {selected_person}
+If you think the current message is fine then just say so and don't make any changes. 
+
+Consider the person's interests, psychological profile if you can deduce one, background, and any relationship context when making your analysis.
+
+Just return the summary of your assement and the better alternative phrasings from your analysis. Alternative phrasings should
+capture the underlying belief/tenor of the original message but custom to the person.
+Return well formed and readable markdown  that has
+the assement text and a list of alternate phrase strings with their classifications in parentheses ie. "<alternate phrase> (rationale/classification)".
+
+"""
+                                            
+                                            # Call the Gemma model for analysis
+                                            with st.spinner(f"Analyzing your message for {selected_person}..."):
+                                                try:
+                                                    # Use the text model directly for this analysis
+                                                    result = st.session_state.gemma_chat.call_simple(
+                                                        analysis_prompt,
+                                                        system_prompt="You are a helpful communication expert who provides thoughtful, constructive feedback on interpersonal communications."
+                                                    )
+                                                    
+                                                    if result["success"]:
+                                                        st.subheader("🎯 Analysis Results")
+                                                        
+                                                        # Display the analysis in a nice format
+                                                        st.markdown(result['response'])
+                                                        
+                                                    else:
+                                                        st.error(f"Analysis failed: {result['error']}")
+                                                        
+                                                except Exception as e:
+                                                    st.error(f"Error during analysis: {str(e)}")
+                                        else:
+                                            st.warning("Please enter a message to analyze.")
+                                
+                                else:
+                                    st.error("Could not find data for the selected person.")
+                            
+                            else:
+                                st.info("👆 Please select a person from the dropdown to begin conversation analysis.")
+                        
+                        else:
+                            st.warning("No people found in the database.")
+                            st.write("Add some people using the Chat Mode or One-Shot Prompts first.")
+                    
+                    else:
+                        st.error("Unable to load people data.")
+                        
+                except json.JSONDecodeError as e:
+                    st.error(f"Error parsing people data: {e}")
+                except Exception as e:
+                    st.error(f"Error loading people data: {e}")
+        
+        else:
+            st.warning("Please configure your API key first to use Custom Chat Analysis.")
 
 if __name__ == "__main__":
     main()
