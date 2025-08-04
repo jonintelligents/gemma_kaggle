@@ -9,6 +9,7 @@ import logging
 from datetime import datetime
 import io
 import traceback
+import re
 
 from GemmaChat import GemmaChat
 from GraphPersonManager import GraphPersonManager
@@ -41,6 +42,16 @@ def initialize_session_state():
         st.session_state.system_prompts = {}
     if "api_initialized" not in st.session_state:
         st.session_state.api_initialized = False
+
+# Prompt helper functions
+def extract_variables_from_prompt(prompt_text):
+    """Extract variable placeholders from prompt text."""
+    if not prompt_text:
+        return []
+    
+    # Find all {variable} patterns
+    variables = re.findall(r'\{([^}]+)\}', prompt_text)
+    return list(set(variables))  # Remove duplicates
 
 # Image processing functions
 def validate_image_file(uploaded_file):
@@ -211,8 +222,8 @@ def main():
         st.warning("Please set GEMINI_API_KEY environment variable or configure your API key in the sidebar to get started.")
         return
     
-    # Main interface tabs (added Custom Chat tab)
-    tab1, tab2, tab3, tab4 = st.tabs(["💬 Chat Mode", "⚡ One-Shot Prompts", "👥 People Database", "🎯 Custom Chat"])
+    # Main interface tabs (added Prompts tab)
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["💬 Chat Mode", "⚡ One-Shot Prompts", "👥 People Database", "🎯 Custom Chat", "📝 Prompts"])
     
     with tab1:
         st.header("Chat Mode")
@@ -649,6 +660,166 @@ def main():
         
         else:
             st.warning("Please configure your API key first to use Custom Chat Analysis.")
+    
+    with tab5:
+        st.header("Prompt Templates")
+        st.write("View and explore all available prompt templates used by the system.")
+        
+        if st.session_state.api_initialized:
+            # Refresh button for prompts
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                if st.button("🔄 Refresh Prompts", key="refresh_prompts"):
+                    # Reload prompts from disk
+                    if hasattr(st.session_state.prompt_manager, 'reload'):
+                        st.session_state.prompt_manager.reload()
+                    st.rerun()
+            
+            # Load and display prompt templates
+            with st.spinner("Loading prompt templates..."):
+                try:
+                    prompt_manager = st.session_state.prompt_manager
+                    
+                    if prompt_manager and hasattr(prompt_manager, 'list_prompts'):
+                        # Get list of all available prompts
+                        prompt_names = prompt_manager.list_prompts()
+                        
+                        if prompt_names:
+                            st.success(f"Found {len(prompt_names)} prompt templates")
+                            
+                            # Display each prompt template in an expander
+                            for prompt_name in prompt_names:
+                                try:
+                                    # Get prompt variables
+                                    variables = prompt_manager.get_prompt_variables(prompt_name)
+                                    
+                                    # Create title with variables
+                                    if variables:
+                                        variables_str = ", ".join([f"{{{var}}}" for var in variables])
+                                        title = f"📝 {prompt_name} - Variables: {variables_str}"
+                                    else:
+                                        title = f"📝 {prompt_name} - No variables"
+                                    
+                                    with st.expander(title, expanded=False):
+                                        # Display prompt metadata
+                                        col1, col2, col3 = st.columns(3)
+                                        with col1:
+                                            st.write(f"**Prompt Name:** `{prompt_name}`")
+                                        with col2:
+                                            st.write(f"**Variables Found:** {len(variables)}")
+                                        
+                                        if variables:
+                                            st.write("**Required Variables:**")
+                                            for var in variables:
+                                                st.write(f"• `{{{var}}}`")
+                                            st.markdown("---")
+                                        
+                                        # Get the raw prompt content
+                                        prompt_content = prompt_manager.get_raw_prompt(prompt_name)
+                                        
+                                        # Display the prompt content
+                                        st.subheader("Prompt Content:")
+                                        st.code(prompt_content, language="text")
+                                        
+                                        # Show character and word count
+                                        char_count = len(prompt_content)
+                                        word_count = len(prompt_content.split())
+                                        st.caption(f"📊 Characters: {char_count:,} | Words: {word_count:,}")
+                                 
+                                except Exception as prompt_e:
+                                    st.error(f"Error loading prompt '{prompt_name}': {prompt_e}")
+                                    with st.expander(f"⚠️ Error Details for {prompt_name}", expanded=False):
+                                        st.code(str(prompt_e))
+                        
+                        else:
+                            st.warning("No prompt templates found in the prompts directory.")
+                            st.info("Make sure your prompts directory contains .md files with prompt templates.")
+                    
+                    else:
+                        st.error("PromptManager is not properly initialized or doesn't have the expected methods.")
+                        st.info("Expected PromptManager methods: `list_prompts()`, `get_prompt_variables()`, `get_raw_prompt()`, `get_prompt()`")
+                        
+                        # Show available methods for debugging
+                        if prompt_manager:
+                            st.subheader("Available PromptManager methods:")
+                            methods = [method for method in dir(prompt_manager) 
+                                    if not method.startswith('_') and callable(getattr(prompt_manager, method))]
+                            for method in sorted(methods):
+                                st.write(f"• `{method}()`")
+                            
+                            # Show PromptManager info
+                            if hasattr(prompt_manager, '__repr__'):
+                                st.write(f"**PromptManager Info:** {repr(prompt_manager)}")
+                
+                except Exception as e:
+                    st.error(f"Error loading prompt templates: {e}")
+                    st.write("**Debug Information:**")
+                    st.write(f"Error type: {type(e).__name__}")
+                    st.write(f"Error details: {str(e)}")
+                    
+                    # Show traceback for debugging
+                    if st.checkbox("Show detailed error traceback", key="show_traceback"):
+                        import traceback
+                        st.code(traceback.format_exc())
+                    
+                    # Try to get some basic info about PromptManager
+                    try:
+                        if hasattr(st.session_state, 'prompt_manager') and st.session_state.prompt_manager:
+                            st.write("**PromptManager Object Info:**")
+                            st.write(f"Type: {type(st.session_state.prompt_manager)}")
+                            st.write(f"String representation: {st.session_state.prompt_manager}")
+                            
+                            # Check if prompts directory exists
+                            if hasattr(st.session_state.prompt_manager, 'prompts_dir'):
+                                prompts_dir = st.session_state.prompt_manager.prompts_dir
+                                st.write(f"Prompts directory: {prompts_dir}")
+                                st.write(f"Directory exists: {os.path.exists(prompts_dir)}")
+                                if os.path.exists(prompts_dir):
+                                    try:
+                                        files = os.listdir(prompts_dir)
+                                        md_files = [f for f in files if f.endswith('.md')]
+                                        st.write(f"Markdown files found: {md_files}")
+                                    except Exception as dir_e:
+                                        st.write(f"Error reading directory: {dir_e}")
+                            
+                    except Exception as debug_e:
+                        st.write(f"Could not get PromptManager debug info: {debug_e}")
+        
+        else:
+            st.warning("Please configure your API key first to view prompt templates.")
+            
+            # Show some example of what the prompts tab will look like
+            st.subheader("Preview: What you'll see when configured")
+            st.info("Once you configure your API key, this tab will show all available prompt templates with their variables and content.")
+            
+            # Example prompt display
+            with st.expander("📝 Example: system - Variables: {tool_function_descriptions}", expanded=True):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.write("**Prompt Name:** `system`")
+                with col2:
+                    st.write("**Variables Found:** 1")
+                with col3:
+                    st.button("🔍 Debug Info", disabled=True)
+                
+                st.write("**Required Variables:**")
+                st.write("• `{tool_function_descriptions}`")
+                st.markdown("---")
+                st.subheader("Prompt Content:")
+                example_content = """You are an AI assistant that helps manage information about people.
+    You have access to tools for storing and retrieving person information.
+    Available tools: {tool_function_descriptions}
+
+    Always be helpful and accurate when working with person data."""
+                st.code(example_content, language="text")
+                st.caption("📊 Characters: 234 | Words: 42")
+                
+                st.subheader("Test Template with Variables:")
+                st.text_input("Value for `{tool_function_descriptions}`:", disabled=True, placeholder="Enter value for tool_function_descriptions")
+                st.button("Test Template", disabled=True)
+                
+                st.subheader("Copy Raw Prompt:")
+                st.text_area("Select all and copy:", value=example_content, height=100, disabled=True)
 
 if __name__ == "__main__":
     main()
