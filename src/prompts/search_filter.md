@@ -1,0 +1,3 @@
+Look at these search results below and return a summary of the person all the people returned that match the search query. Return a summarized and readable list of the results.  Don't include numbers in the results but use words like high match or probable match.Make this a concise summary and don't stretch to make connections because everyone returned isn't a match.  Only include strong and highly probably matches in the summary. 
+
+{search_results}
