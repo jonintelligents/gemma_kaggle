@@ -1,4 +1,4 @@
-from gemma_chat import GemmaChat
+from GemmaChat import GemmaChat
 # Import your existing tool manager
 from GraphPersonManager import GraphPersonManager
 from PromptManager import PromptManager
