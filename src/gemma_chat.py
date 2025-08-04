@@ -66,6 +66,18 @@ class GemmaChat:
         except Exception as e:
             raise Exception(f"Failed to encode image: {e}")
     
+    def get_image_mime_type(self, image_path: str) -> str:
+        """Get MIME type for the image file."""
+        extension = Path(image_path).suffix.lower()
+        mime_types = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp'
+        }
+        return mime_types.get(extension, 'image/jpeg')
+    
     def _get_effective_system_prompt(self, provided_system_prompt: Optional[str], 
                                    has_image: bool) -> Optional[str]:
         """Get the effective system prompt to use based on context."""
@@ -113,16 +125,6 @@ class GemmaChat:
         except Exception as e:
             self.logger.warning(f"Error formatting search results: {e}")
             return search_results
-        """Get MIME type for the image file."""
-        extension = Path(image_path).suffix.lower()
-        mime_types = {
-            '.png': 'image/png',
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.gif': 'image/gif',
-            '.webp': 'image/webp'
-        }
-        return mime_types.get(extension, 'image/jpeg')
     
     def _prepare_content(self, prompt: str, system_prompt: Optional[str] = None, 
                         image_path: Optional[str] = None, include_history: bool = True) -> Any:
