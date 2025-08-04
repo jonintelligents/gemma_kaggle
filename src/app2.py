@@ -211,8 +211,8 @@ def main():
         st.warning("Please set GEMINI_API_KEY environment variable or configure your API key in the sidebar to get started.")
         return
     
-    # Main interface tabs (removed Advanced Settings tab)
-    tab1, tab2 = st.tabs(["💬 Chat Mode", "⚡ One-Shot Prompts"])
+    # Main interface tabs (added People Database tab)
+    tab1, tab2, tab3 = st.tabs(["💬 Chat Mode", "⚡ One-Shot Prompts", "👥 People Database"])
     
     with tab1:
         st.header("Chat Mode")
@@ -367,6 +367,147 @@ def main():
                         
             else:
                 st.warning("Please enter a prompt or upload an image before submitting.")
+    
+    with tab3:
+        st.header("People Database")
+        st.write("View all people stored in the knowledge graph with their facts and properties.")
+        
+        if st.session_state.api_initialized:
+            # Database statistics at the top
+            try:
+                stats = st.session_state.tool_manager.get_graph_statistics()
+                st.info(stats)
+            except Exception as e:
+                st.error(f"Error loading statistics: {e}")
+            
+            # Refresh button
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                if st.button("🔄 Refresh", key="refresh_people"):
+                    st.rerun()
+            
+            # Get all people data
+            with st.spinner("Loading people data..."):
+                try:
+                    people_data_result = st.session_state.tool_manager.get_all_people(include_relationships=True)
+                    
+                    # Extract JSON from the result string
+                    if "People data: " in people_data_result:
+                        json_start = people_data_result.find('People data: ') + len('People data: ')
+                        json_data = people_data_result[json_start:]
+                        people_data = json.loads(json_data)
+                        
+                        if people_data:
+                            st.success(f"Found {len(people_data)} people in the database")
+                            
+                            # Display each person in an expander
+                            for idx, person in enumerate(people_data):
+                                person_name = person.get('name', 'Unknown')
+                                person_id = person.get('id', 'N/A')
+                                # Create unique key using index to avoid duplicates
+                                unique_key = f"{person_id}_{idx}" if person_id != 'N/A' else f"person_{idx}"
+                                
+                                with st.expander(f"👤 {person_name}", expanded=False):
+                                    # Person basic info
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        st.write(f"**ID:** {person_id}")
+                                    with col2:
+                                        st.write(f"**Name:** {person_name}")
+                                    
+                                    # Properties section
+                                    properties = person.get('properties', {})
+                                    if properties:
+                                        st.subheader("📋 Properties")
+                                        for key, value in properties.items():
+                                            if key != 'name':  # Skip name as it's already displayed
+                                                st.write(f"**{key.title()}:** {value}")
+                                    
+                                    # Facts section
+                                    facts = person.get('facts', [])
+                                    if facts:
+                                        st.subheader(f"📝 Facts ({len(facts)})")
+                                        for i, fact in enumerate(facts, 1):
+                                            fact_text = fact.get('text', 'No text')
+                                            fact_type = fact.get('type', 'general')
+                                            fact_id = fact.get('id', 'N/A')
+                                            
+                                            # Color code by fact type
+                                            type_colors = {
+                                                'work': '🔵',
+                                                'hobby': '🟢', 
+                                                'relationship': '❤️',
+                                                'volunteer': '🟡',
+                                                'general': '⚪'
+                                            }
+                                            
+                                            type_icon = type_colors.get(fact_type, '⚪')
+                                            
+                                            st.write(f"{type_icon} **{i}.** {fact_text}")
+                                            st.caption(f"Type: {fact_type} | ID: {fact_id}")
+                                            st.divider()
+                                    
+                                    # Relationships section
+                                    relationships = person.get('relationships', {})
+                                    if relationships:
+                                        st.subheader("🔗 Relationships")
+                                        
+                                        # Connected people
+                                        connected_people = relationships.get('connected_people', [])
+                                        if connected_people:
+                                            st.write("**👥 Connected People:**")
+                                            for connection in connected_people:
+                                                st.write(f"• {connection}")
+                                        
+                                        # Connected entities
+                                        connected_entities = relationships.get('connected_entities', [])
+                                        if connected_entities:
+                                            st.write("**🏢 Connected Entities:**")
+                                            for entity in connected_entities:
+                                                entity_name = entity.get('name', 'Unknown')
+                                                entity_type = entity.get('type', 'unknown')
+                                                st.write(f"• {entity_name} ({entity_type})")
+                                    
+                                    # Delete button at bottom
+                                    st.markdown("---")
+                                    if st.button(f"🗑️ DELETE PERSON", key=f"delete_{unique_key}", type="primary", 
+                                                use_container_width=True):
+                                        st.session_state[f"confirm_delete_{unique_key}"] = True
+                                    
+                                    # Delete confirmation
+                                    if st.session_state.get(f"confirm_delete_{unique_key}", False):
+                                        st.error(f"⚠️ Are you sure you want to delete {person_name}?")
+                                        col1, col2 = st.columns(2)
+                                        with col1:
+                                            if st.button(f"✅ Yes, Delete", key=f"confirm_yes_{unique_key}"):
+                                                # Use person_id for deletion, fallback to name if needed
+                                                if person_id != 'N/A':
+                                                    result = st.session_state.tool_manager.delete_person(person_id=person_id)
+                                                else:
+                                                    result = st.session_state.tool_manager.delete_person(name=person_name)
+                                                st.success(f"Person deleted: {result}")
+                                                st.session_state[f"confirm_delete_{unique_key}"] = False
+                                                st.rerun()
+                                        with col2:
+                                            if st.button(f"❌ Cancel", key=f"confirm_no_{unique_key}"):
+                                                st.session_state[f"confirm_delete_{unique_key}"] = False
+                                                st.rerun()
+                        else:
+                            st.info("No people found in the database")
+                            st.write("Use the Chat Mode or One-Shot Prompts to add people to the database.")
+                    
+                    else:
+                        st.error("Unable to parse people data")
+                        st.code(people_data_result)
+                        
+                except json.JSONDecodeError as e:
+                    st.error(f"Error parsing people data: {e}")
+                    st.code(people_data_result)
+                except Exception as e:
+                    st.error(f"Error loading people data: {e}")
+        
+        else:
+            st.warning("Please configure your API key first to view the people database.")
 
 if __name__ == "__main__":
     main()
