@@ -592,32 +592,19 @@ def main():
                                         if your_message.strip():
                                             # Create analysis prompt
                                             person_facts = "\n".join([f"- {fact.get('text', '')}" for fact in facts])
-                                            
-                                            analysis_prompt = f"""
-You are a communication expert helping someone improve their conversation with a specific person. 
 
-**Person:** {selected_person}
+                                            if not person_facts :
+                                                person_facts =  "No specific information available."
 
-**What I know about {selected_person}:**
-{person_facts if person_facts else "No specific information available."}
-
-**Previous conversation context:**
-{previous_conversation if previous_conversation.strip() else "No previous context provided."}
-
-**My planned message:**
-"{your_message}"
-
-Please analyze my planned message and provide alternative phrasings to say the same thing based on what we know about {selected_person}
-If you think the current message is fine then just say so and don't make any changes. 
-
-Consider the person's interests, psychological profile if you can deduce one, background, and any relationship context when making your analysis.
-
-Just return the summary of your assement and the better alternative phrasings from your analysis. Alternative phrasings should
-capture the underlying belief/tenor of the original message but custom to the person.
-Return well formed and readable markdown  that has
-the assement text and a list of alternate phrase strings with their classifications in parentheses ie. "<alternate phrase> (rationale/classification)".
-
-"""
+                                            if not previous_conversation.strip() :
+                                                previous_conversation = "No previous context provided."
+                                           
+                                            analysis_prompt = st.session_state.prompt_manager.get_prompt('message_analysis', {
+                                                'selected_person' : selected_person,
+                                                'person_facts' : person_facts,
+                                                'previous_conversation' : previous_conversation,
+                                                'message' : your_message
+                                            })
                                             
                                             # Call the Gemma model for analysis
                                             with st.spinner(f"Analyzing your message for {selected_person}..."):
