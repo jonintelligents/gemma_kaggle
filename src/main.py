@@ -1,7 +1,3 @@
-"""
-Example usage of the GemmaChat class
-"""
-
 from gemma_chat import GemmaChat
 # Import your existing tool manager
 from GraphPersonManager import GraphPersonManager
@@ -26,7 +22,8 @@ def main():
         text_model="gemma-3n-e4b-it",           # Default for text
         image_model="gemma-3-4b-it",            # Default for images
         default_text_system_prompt=text_system_prompt,     # Default system prompt for text
-        default_image_system_prompt=image_system_prompt    # Default system prompt for images
+        default_image_system_prompt=image_system_prompt,   # Default system prompt for images
+        prompt_manager=prompt_manager           # For search result formatting
     )  # Uses GEMINI_API_KEY from environment
     
     print("=== GemmaChat Usage Examples ===\n")

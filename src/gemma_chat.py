@@ -14,7 +14,7 @@ class GemmaChat:
     
     def __init__(self, api_key: Optional[str] = None, text_model: str = "gemma-3n-e4b-it", 
                  image_model: str = "gemma-3-4b-it", default_text_system_prompt: Optional[str] = None,
-                 default_image_system_prompt: Optional[str] = None):
+                 default_image_system_prompt: Optional[str] = None, prompt_manager=None):
         """
         Initialize the GemmaChat instance.
         
@@ -24,11 +24,13 @@ class GemmaChat:
             image_model: Model name to use for requests with images
             default_text_system_prompt: Default system prompt for text-only requests
             default_image_system_prompt: Default system prompt for image requests
+            prompt_manager: Optional prompt manager for search result formatting
         """
         self.text_model = text_model
         self.image_model = image_model
         self.default_text_system_prompt = default_text_system_prompt
         self.default_image_system_prompt = default_image_system_prompt
+        self.prompt_manager = prompt_manager
         self.chat_history = []
         
         # Setup API
@@ -78,6 +80,39 @@ class GemmaChat:
             return self.default_text_system_prompt
         
         return None
+    
+    def _format_search_results(self, search_results: str) -> str:
+        """
+        Format search results using the prompt manager if available.
+        
+        Args:
+            search_results: Raw search results to format
+            
+        Returns:
+            Formatted search results or original if no prompt manager
+        """
+        if not self.prompt_manager:
+            return search_results
+            
+        try:
+            # Get the search filter prompt
+            filter_prompt = self.prompt_manager.get_prompt("search_filter", {"search_results": search_results})
+            
+            # Make a simple call to format the results (no history, no tools)
+            result = self.call_simple(
+                filter_prompt, 
+                include_history=False  # Don't include chat history for formatting
+            )
+            
+            if result["success"]:
+                return result["response"]
+            else:
+                self.logger.warning(f"Failed to format search results: {result.get('error')}")
+                return search_results
+                
+        except Exception as e:
+            self.logger.warning(f"Error formatting search results: {e}")
+            return search_results
         """Get MIME type for the image file."""
         extension = Path(image_path).suffix.lower()
         mime_types = {
@@ -248,6 +283,20 @@ class GemmaChat:
                     for tool in tool_calls:
                         try:
                             tool_output = tool_manager.execute_tool(tool["name"], tool.get("parameters", {}))
+                            
+                            # Print tool execution output
+                            print(f"\n✅ Tool '{tool['name']}' executed. Output: {tool_output}")
+                            if isinstance(tool_output, dict) and 'result' in tool_output:
+                                print(tool_output['result'])
+                            
+                            # Format search results if this is a search tool
+                            if tool['name'] == 'search' and isinstance(tool_output, dict) and 'result' in tool_output:
+                                formatted_results = self._format_search_results(tool_output['result'])
+                                print("\n📄 Formatted Results:")
+                                print(formatted_results)
+                                # Update the tool output with formatted results
+                                tool_output['result'] = formatted_results
+                            
                             result_data["tool_results"].append({
                                 "tool": tool["name"],
                                 "success": True,
@@ -386,7 +435,18 @@ class GemmaChat:
                                     for tool in result["tool_calls"]:
                                         try:
                                             tool_output = tool_manager.execute_tool(tool["name"], tool.get("parameters", {}))
+                                            
                                             print(f"✅ Tool '{tool['name']}' executed: {tool_output}")
+                                            if isinstance(tool_output, dict) and 'result' in tool_output:
+                                                print(tool_output['result'])
+                                            
+                                            # Format search results if this is a search tool
+                                            if tool['name'] == 'search' and isinstance(tool_output, dict) and 'result' in tool_output:
+                                                formatted_results = self._format_search_results(tool_output['result'])
+                                                print("\n📄 Formatted Results:")
+                                                print(formatted_results)
+                                                # Update the tool output with formatted results
+                                                tool_output['result'] = formatted_results
                                             
                                             # Add to chat history
                                             self.chat_history.append({
@@ -430,6 +490,14 @@ class GemmaChat:
         for tool in tool_calls:
             try:
                 tool_output = tool_manager.execute_tool(tool["name"], tool.get("parameters", {}))
+                
+                # Format search results if this is a search tool
+                if tool['name'] == 'search' and isinstance(tool_output, dict) and 'result' in tool_output:
+                    formatted_results = self._format_search_results(tool_output['result'])
+                    print(f"📄 Formatted search results:\n{formatted_results}")
+                    # Update the tool output with formatted results
+                    tool_output['result'] = formatted_results
+                
                 results.append({
                     "tool": tool["name"],
                     "success": True,
