@@ -10,7 +10,7 @@ from datetime import datetime
 import io
 import traceback
 
-from gemma_chat import GemmaChat
+from GemmaChat import GemmaChat
 from GraphPersonManager import GraphPersonManager
 from PromptManager import PromptManager
 

@@ -10,10 +10,10 @@ from datetime import datetime
 import io
 import traceback
 
-from google import genai
-from ToolManager import ExamplePersonToolManager
+from GemmaChat import GemmaChat
 from GraphPersonManager import GraphPersonManager
 from PromptManager import PromptManager
+
 MODULES_AVAILABLE = True
 
 # Configure logging
@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Page configuration
 st.set_page_config(
-    page_title="LLM Tool Demo",
+    page_title="LLM Tool Demo with GemmaChat",
     page_icon="🤖",
     layout="wide"
 )
@@ -31,14 +31,14 @@ def initialize_session_state():
     """Initialize all session state variables."""
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = []
-    if "client" not in st.session_state:
-        st.session_state.client = None
+    if "gemma_chat" not in st.session_state:
+        st.session_state.gemma_chat = None
     if "tool_manager" not in st.session_state:
         st.session_state.tool_manager = None
     if "prompt_manager" not in st.session_state:
         st.session_state.prompt_manager = None
-    if "system_prompt" not in st.session_state:
-        st.session_state.system_prompt = None
+    if "system_prompts" not in st.session_state:
+        st.session_state.system_prompts = {}
     if "api_initialized" not in st.session_state:
         st.session_state.api_initialized = False
 
@@ -57,214 +57,59 @@ def validate_image_file(uploaded_file):
     
     return True
 
-def encode_image_to_base64(image_bytes):
-    """Encode image bytes to base64 string."""
+def save_uploaded_file_temporarily(uploaded_file):
+    """Save uploaded file temporarily and return the path."""
     try:
-        encoded_string = base64.b64encode(image_bytes).decode('utf-8')
-        return encoded_string
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp_file:
+            tmp_file.write(uploaded_file.getvalue())
+            return tmp_file.name
     except Exception as e:
-        raise Exception(f"Failed to encode image: {e}")
-
-def get_image_mime_type(filename):
-    """Get MIME type for the image file."""
-    extension = Path(filename).suffix.lower()
-    mime_types = {
-        '.png': 'image/png',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.gif': 'image/gif',
-        '.webp': 'image/webp'
-    }
-    return mime_types.get(extension, 'image/jpeg')
-
-# Audio processing functions
-def validate_audio_file(uploaded_file):
-    """Validate uploaded audio file."""
-    if uploaded_file is None:
-        return False
-    
-    supported_extensions = {'.wav', '.mp3', '.m4a', '.flac', '.ogg'}
-    file_extension = Path(uploaded_file.name).suffix.lower()
-    
-    if file_extension not in supported_extensions:
-        st.error(f"Unsupported audio format: {file_extension}. Supported formats: {', '.join(supported_extensions)}")
-        return False
-    
-    return True
-
-def encode_audio_to_base64(audio_bytes):
-    """Encode audio bytes to base64 string."""
-    try:
-        encoded_string = base64.b64encode(audio_bytes).decode('utf-8')
-        return encoded_string
-    except Exception as e:
-        raise Exception(f"Failed to encode audio: {e}")
-
-def get_audio_mime_type(filename):
-    """Get MIME type for the audio file."""
-    extension = Path(filename).suffix.lower()
-    mime_types = {
-        '.wav': 'audio/wav',
-        '.mp3': 'audio/mpeg',
-        '.m4a': 'audio/mp4',
-        '.flac': 'audio/flac',
-        '.ogg': 'audio/ogg'
-    }
-    return mime_types.get(extension, 'audio/wav')
-
-# Setup functions
-def setup_gemini_api(api_key):
-    """Setup Gemini API client."""
-    try:
-        os.environ['GEMINI_API_KEY'] = api_key
-        client = genai.Client()
-        return client
-    except Exception as e:
-        st.error(f"Failed to setup Gemini API: {e}")
+        st.error(f"Failed to save uploaded file: {e}")
         return None
 
-def initialize_managers():
-    """Initialize tool and prompt managers."""
+# Setup functions
+def initialize_managers_and_chat(api_key):
+    """Initialize all managers and GemmaChat instance."""
     try:
-        # Initialize prompt manager
-        prompt_manager = PromptManager()
+        # Set API key in environment
+        os.environ['GEMINI_API_KEY'] = api_key
         
-        # Initialize tool manager (you can switch between ExamplePersonToolManager and GraphPersonManager)
+        # Initialize managers
+        prompt_manager = PromptManager()
         tool_manager = GraphPersonManager()  # or ExamplePersonToolManager()
         
-        # Setup system prompt
-        system_prompt = prompt_manager.get_prompt("system", {
+        # Setup unified system prompt for both text and images
+        unified_system_prompt = prompt_manager.get_prompt("system", {
             "tool_function_descriptions": tool_manager.get_available_tools_detailed()
         })
         
-        return tool_manager, prompt_manager, system_prompt
+        # Initialize GemmaChat with the same system prompt for both text and images
+        gemma_chat = GemmaChat(
+            text_model="gemma-3n-e4b-it",           # Default for text
+            image_model="gemma-3-4b-it",            # Default for images
+            default_text_system_prompt=unified_system_prompt,
+            default_image_system_prompt=unified_system_prompt,  # Same prompt for images
+            prompt_manager=prompt_manager
+        )
+        
+        return gemma_chat, tool_manager, prompt_manager, {
+            "unified": unified_system_prompt
+        }
+        
     except Exception as e:
-        st.error(f"Failed to initialize managers: {e}")
-        return None, None, None
-
-# Main LLM calling function (adapted from your original)
-def call_gemini_llm(user_query, chat_history, client, system_prompt, tool_manager, 
-                   is_chat_mode=True, max_retries=3, image_data=None, audio_data=None):
-    """Call Gemini LLM with tool support."""
-    
-    for attempt in range(max_retries):
-        try:
-            # Build context
-            if system_prompt:
-                full_context = system_prompt + "\n\n"
-            else:
-                full_context = ""
-            
-            # Add conversation history
-            full_context += "Conversation history:\n"
-            for message in chat_history:
-                role = message["role"]
-                content = message["content"]
-                full_context += f"{role.capitalize()}: {content}\n"
-
-            full_context += f"User: {user_query}\nAssistant:"
-
-            # Prepare the content for the API call
-            parts = [{"text": full_context}]
-            
-            # Add image if provided
-            if image_data:
-                parts.append({
-                    "inline_data": {
-                        "mime_type": image_data["mime_type"],
-                        "data": image_data["base64"]
-                    }
-                })
-            
-            # Add audio if provided
-            if audio_data:
-                parts.append({
-                    "inline_data": {
-                        "mime_type": audio_data["mime_type"],
-                        "data": audio_data["base64"]
-                    }
-                })
-
-            # Create content structure
-            if image_data or audio_data:
-                contents = [{"role": "user", "parts": parts}]
-            else:
-                contents = full_context
-
-            # Make the API call
-            response = client.models.generate_content(
-                model="gemma-3-4b-it",
-                contents=contents
-            )
-
-            llm_content = response.text.strip()
-
-            # Clean up JSON if wrapped in code blocks
-            if llm_content.startswith("```json") and llm_content.endswith("```"):
-                llm_content = llm_content[7:-3].strip()
-
-            try:
-                parsed = json.loads(llm_content)
-                
-                response_text = parsed.get("response", "").strip()
-                tool_calls = parsed.get("tool_calls", [])
-
-                if not tool_calls:
-                    return {"type": "text", "content": response_text}
-                else:
-                    # Handle tool calls
-                    tool_results = []
-                    for tool in tool_calls:
-                        try:
-                            tool_output = tool_manager.execute_tool(
-                                tool["name"], 
-                                tool.get("parameters", {})
-                            )
-                            tool_results.append({
-                                "tool": tool["name"],
-                                "parameters": tool.get("parameters", {}),
-                                "result": tool_output
-                            })
-                            
-                            # Special handling for search results
-                            if tool["name"] == "search":
-                                # You might want to format search results here
-                                pass
-                                
-                        except Exception as e:
-                            tool_results.append({
-                                "tool": tool["name"],
-                                "parameters": tool.get("parameters", {}),
-                                "error": str(e)
-                            })
-                    
-                    return {
-                        "type": "tool_calls",
-                        "content": response_text,
-                        "tool_results": tool_results
-                    }
-                    
-            except json.JSONDecodeError as e:
-                if attempt < max_retries - 1:
-                    continue
-                else:
-                    return {"type": "text", "content": llm_content}
-                    
-        except Exception as e:
-            if attempt < max_retries - 1:
-                continue
-            else:
-                return {"type": "error", "content": f"API error after {max_retries} attempts: {e}"}
-    
-    return {"type": "error", "content": "Maximum retry attempts exceeded"}
+        st.error(f"Failed to initialize managers and chat: {e}")
+        return None, None, None, None
 
 # UI Helper functions
 def display_message(message, is_user=True):
     """Display a chat message."""
     if is_user:
         with st.chat_message("user"):
-            if message.get("image"):
-                st.image(message["image"], width=300)
+            if message.get("image_path"):
+                try:
+                    st.image(message["image_path"], width=300)
+                except:
+                    st.write(f"🖼️ Image: {message['image_path']}")
             if message.get("audio_name"):
                 st.write(f"🎵 Audio file: {message['audio_name']}")
             st.write(message["text"])
@@ -274,144 +119,139 @@ def display_message(message, is_user=True):
             if message.get("tool_results"):
                 with st.expander("Tool Execution Details"):
                     for result in message["tool_results"]:
-                        if "error" in result:
-                            st.error(f"❌ Tool '{result['tool']}' failed: {result['error']}")
+                        if not result.get("success", True):
+                            st.error(f"❌ Tool '{result['tool']}' failed: {result.get('error', 'Unknown error')}")
                         else:
                             st.success(f"✅ Tool '{result['tool']}' executed successfully")
-                            st.json(result["result"])
+                            if "output" in result:
+                                st.json(result["output"])
+
+def handle_chat_response(result, user_message):
+    """Handle the response from GemmaChat and update chat history."""
+    if result["success"]:
+        # Add AI response to chat history
+        ai_message = {
+            "role": "assistant",
+            "text": result["response"],
+            "tool_results": result.get("tool_results", []),
+            "timestamp": datetime.now()
+        }
+        st.session_state.chat_messages.append(ai_message)
+        
+        # Clean up temporary files
+        if user_message.get("temp_image_path") and os.path.exists(user_message["temp_image_path"]):
+            try:
+                os.unlink(user_message["temp_image_path"])
+            except:
+                pass
+                
+        return True
+    else:
+        st.error(f"Error: {result['error']}")
+        return False
+
+def get_default_prompt_for_image():
+    """Return the default prompt when an image is uploaded without text."""
+    return "Extract the information about this person from the image and store them"
 
 def main():
-    st.title("🤖 LLM Tool Demo with Gemini")
+    st.title("🤖 LLM Tool Demo with GemmaChat")
     
     if not MODULES_AVAILABLE:
         st.stop()
     
     initialize_session_state()
     
-    # Sidebar for API configuration
+    # Sidebar for application info and tools
     with st.sidebar:
-        st.header("🔧 Configuration")
+        st.header("📋 Application Info")
+        st.write("**LLM Tool Demo** - Interactive chat interface with automated tool execution for person information management.")
         
-        # API Key input
-        api_key = st.text_input("Gemini API Key", type="password", 
-                               help="Enter your Google Gemini API key")
+        # Check for API key in environment first
+        api_key = os.getenv('GEMINI_API_KEY')
+        
+        if not api_key:
+            # API Key input if not in environment
+            st.header("🔑 API Configuration")
+            api_key = st.text_input("Gemini API Key", type="password", 
+                                   help="Enter your Google Gemini API key (or set GEMINI_API_KEY environment variable)")
         
         if api_key and not st.session_state.api_initialized:
-            with st.spinner("Initializing API and managers..."):
-                # Setup Gemini API
-                client = setup_gemini_api(api_key)
-                if client:
-                    st.session_state.client = client
-                    
-                    # Initialize managers
-                    tool_manager, prompt_manager, system_prompt = initialize_managers()
-                    if tool_manager and prompt_manager and system_prompt:
-                        st.session_state.tool_manager = tool_manager
-                        st.session_state.prompt_manager = prompt_manager
-                        st.session_state.system_prompt = system_prompt
-                        st.session_state.api_initialized = True
-                        st.success("✅ API and managers initialized!")
-                        st.rerun()
+            with st.spinner("Initializing GemmaChat and managers..."):
+                gemma_chat, tool_manager, prompt_manager, system_prompts = initialize_managers_and_chat(api_key)
+                
+                if gemma_chat and tool_manager and prompt_manager:
+                    st.session_state.gemma_chat = gemma_chat
+                    st.session_state.tool_manager = tool_manager
+                    st.session_state.prompt_manager = prompt_manager
+                    st.session_state.system_prompts = system_prompts
+                    st.session_state.api_initialized = True
+                    st.rerun()
         
         if st.session_state.api_initialized:
-            st.success("✅ System Ready")
+            # Model information
+            st.header("🤖 Models")
+            st.write("• **Text:** gemma-3n-e4b-it")
+            st.write("• **Images:** gemma-3-4b-it")
             
-            # Tool manager info
+            # Available tools
+            st.header("🛠️ Available Tools")
             if st.session_state.tool_manager:
-                available_tools = st.session_state.tool_manager.get_available_tools()
-                st.write(f"**Available Tools:** {', '.join(available_tools)}")
+                try:
+                    available_tools = st.session_state.tool_manager.get_available_tools()
+                    for tool in available_tools:
+                        st.write(f"🔧 {tool}")
+                except Exception as e:
+                    st.error(f"Error loading tools: {e}")
         else:
-            st.warning("⚠️ Please enter your API key to continue")
+            if not api_key:
+                st.warning("⚠️ Please set GEMINI_API_KEY environment variable or enter your API key above")
     
     if not st.session_state.api_initialized:
-        st.warning("Please configure your API key in the sidebar to get started.")
+        st.warning("Please set GEMINI_API_KEY environment variable or configure your API key in the sidebar to get started.")
         return
     
-    # Main interface tabs
-    tab1, tab2 = st.tabs(["💬 Chat Mode", "⚡ One-Shot Prompts"])
+    # Main interface tabs (added Custom Chat tab)
+    tab1, tab2, tab3, tab4 = st.tabs(["💬 Chat Mode", "⚡ One-Shot Prompts", "👥 People Database", "🎯 Custom Chat"])
     
     with tab1:
         st.header("Chat Mode")
         st.write("Have a conversation with the AI. Tool calls will be executed automatically.")
+        
+        # Settings for chat mode
+        auto_execute = st.checkbox("Auto-execute tools", value=True, key="chat_auto_exec")
         
         # Display chat history
         for message in st.session_state.chat_messages:
             display_message(message, is_user=message["role"] == "user")
         
         # Chat input area
-        col1, col2, col3 = st.columns([2, 1, 1])
-        
-        with col1:
-            chat_prompt = st.text_input("Type your message:", key="chat_input")
-        
-        with col2:
-            chat_image = st.file_uploader(
-                "Upload image", 
-                type=['png', 'jpg', 'jpeg', 'gif', 'webp'], 
-                key="chat_image"
-            )
-        
-        with col3:
-            chat_audio = st.file_uploader(
-                "Upload audio", 
-                type=['wav', 'mp3', 'm4a', 'flac', 'ogg'], 
-                key="chat_audio"
-            )
+        chat_prompt = st.text_input("Type your message:", key="chat_input")
         
         # Send button
         if st.button("Send", key="chat_send"):
             if chat_prompt:
-                # Process uploaded files
-                image_data = None
-                audio_data = None
-                
-                if chat_image and validate_image_file(chat_image):
-                    image_bytes = chat_image.read()
-                    image_data = {
-                        "base64": encode_image_to_base64(image_bytes),
-                        "mime_type": get_image_mime_type(chat_image.name)
-                    }
-                
-                if chat_audio and validate_audio_file(chat_audio):
-                    audio_bytes = chat_audio.read()
-                    audio_data = {
-                        "base64": encode_audio_to_base64(audio_bytes),
-                        "mime_type": get_audio_mime_type(chat_audio.name)
-                    }
-                
                 # Add user message to chat history
                 user_message = {
                     "role": "user",
                     "text": chat_prompt,
-                    "image": Image.open(io.BytesIO(chat_image.read())) if chat_image else None,
-                    "audio_name": chat_audio.name if chat_audio else None,
                     "timestamp": datetime.now()
                 }
                 st.session_state.chat_messages.append(user_message)
                 
-                # Get AI response
+                # Get AI response using GemmaChat
                 with st.spinner("Processing..."):
-                    result = call_gemini_llm(
+                    result = st.session_state.gemma_chat.call_with_tools(
                         chat_prompt,
-                        [{"role": msg["role"], "content": msg["text"]} for msg in st.session_state.chat_messages],
-                        st.session_state.client,
-                        st.session_state.system_prompt,
                         st.session_state.tool_manager,
-                        is_chat_mode=True,
-                        image_data=image_data,
-                        audio_data=audio_data
+                        auto_execute=auto_execute
                     )
                 
-                # Add AI response to chat history
-                ai_message = {
-                    "role": "assistant",
-                    "text": result["content"],
-                    "tool_results": result.get("tool_results"),
-                    "timestamp": datetime.now()
-                }
-                st.session_state.chat_messages.append(ai_message)
-                
-                st.rerun()
+                # Handle response
+                if handle_chat_response(result, user_message):
+                    st.rerun()
+            else:
+                st.warning("Please enter a message.")
         
         # Clear chat button
         if st.button("Clear Chat History", key="clear_chat"):
@@ -421,97 +261,394 @@ def main():
     with tab2:
         st.header("One-Shot Prompts")
         st.write("Send individual prompts with automatic tool execution.")
+        st.info("💡 Tip: You can upload an image without text - the system will automatically extract person information from the image.")
+        
+        # Settings for one-shot mode
+        oneshot_auto_execute = st.checkbox("Auto-execute tools", value=True, key="oneshot_auto_exec")
         
         # One-shot input area
         oneshot_prompt = st.text_area(
-            "Enter your prompt:", 
+            "Enter your prompt (optional if uploading image):", 
             height=100,
             key="oneshot_input"
         )
         
-        col1, col2 = st.columns(2)
+        oneshot_image = st.file_uploader(
+            "Upload image (optional)", 
+            type=['png', 'jpg', 'jpeg', 'gif', 'webp'], 
+            key="oneshot_image"
+        )
         
-        with col1:
-            oneshot_image = st.file_uploader(
-                "Upload image (optional)", 
-                type=['png', 'jpg', 'jpeg', 'gif', 'webp'], 
-                key="oneshot_image"
-            )
-            
-            if oneshot_image:
-                st.image(oneshot_image, caption="Uploaded Image", width=300)
-        
-        with col2:
-            oneshot_audio = st.file_uploader(
-                "Upload audio (optional)", 
-                type=['wav', 'mp3', 'm4a', 'flac', 'ogg'], 
-                key="oneshot_audio"
-            )
-            
-            if oneshot_audio:
-                st.audio(oneshot_audio, format=f"audio/{oneshot_audio.type.split('/')[-1]}")
+        if oneshot_image:
+            st.image(oneshot_image, caption="Uploaded Image", width=300)
         
         # Submit button
         if st.button("Submit", key="oneshot_submit"):
-            if oneshot_prompt:
-                # Process uploaded files
-                image_data = None
-                audio_data = None
+            # Check if we have either text or image
+            if oneshot_prompt or oneshot_image:
+                temp_image_path = None
+                actual_prompt = oneshot_prompt
                 
+                # Handle image upload
                 if oneshot_image and validate_image_file(oneshot_image):
-                    image_bytes = oneshot_image.read()
-                    image_data = {
-                        "base64": encode_image_to_base64(image_bytes),
-                        "mime_type": get_image_mime_type(oneshot_image.name)
-                    }
-                
-                if oneshot_audio and validate_audio_file(oneshot_audio):
-                    audio_bytes = oneshot_audio.read()
-                    audio_data = {
-                        "base64": encode_audio_to_base64(audio_bytes),
-                        "mime_type": get_audio_mime_type(oneshot_audio.name)
-                    }
+                    temp_image_path = save_uploaded_file_temporarily(oneshot_image)
+                    if not temp_image_path:
+                        st.error("Failed to process uploaded image")
+                        return
+                    
+                    # If no text prompt provided with image, use default
+                    if not oneshot_prompt.strip():
+                        actual_prompt = get_default_prompt_for_image()
+                        st.info(f"Using default prompt: '{actual_prompt}'")
                 
                 # Show user prompt
                 st.subheader("Your Prompt:")
-                st.write(oneshot_prompt)
+                st.write(actual_prompt)
                 
                 if oneshot_image:
                     st.image(oneshot_image, width=300)
-                if oneshot_audio:
-                    st.write(f"🎵 Audio file: {oneshot_audio.name}")
                 
-                # Get AI response
+                # Get AI response using GemmaChat
                 with st.spinner("Processing..."):
-                    result = call_gemini_llm(
-                        oneshot_prompt,
-                        [],  # Empty chat history for one-shot
-                        st.session_state.client,
-                        st.session_state.system_prompt,
-                        st.session_state.tool_manager,
-                        is_chat_mode=False,
-                        image_data=image_data,
-                        audio_data=audio_data
-                    )
+                    if oneshot_auto_execute:
+                        result = st.session_state.gemma_chat.call_with_tools(
+                            actual_prompt,
+                            st.session_state.tool_manager,
+                            image_path=temp_image_path,
+                            auto_execute=True
+                        )
+                    else:
+                        # Manual tool execution
+                        result = st.session_state.gemma_chat.call_with_tools(
+                            actual_prompt,
+                            st.session_state.tool_manager,
+                            image_path=temp_image_path,
+                            auto_execute=False
+                        )
+                        
+                        # If there are tool calls, ask user to confirm
+                        if result["success"] and result.get("tool_calls"):
+                            st.subheader("Tools to Execute:")
+                            for tool in result["tool_calls"]:
+                                st.write(f"- **{tool['name']}**: {tool.get('parameters', {})}")
+                            
+                            if st.button("Execute Tools", key="execute_tools"):
+                                with st.spinner("Executing tools..."):
+                                    tool_results = st.session_state.gemma_chat.execute_pending_tools(
+                                        result["tool_calls"], 
+                                        st.session_state.tool_manager
+                                    )
+                                    result["tool_results"] = tool_results
                 
                 # Display response
                 st.subheader("AI Response:")
-                if result["type"] == "error":
-                    st.error(result["content"])
-                else:
-                    st.write(result["content"])
+                if result["success"]:
+                    st.write(result["response"])
                     
                     if result.get("tool_results"):
                         st.subheader("Tool Execution Results:")
                         for tool_result in result["tool_results"]:
-                            if "error" in tool_result:
-                                st.error(f"❌ Tool '{tool_result['tool']}' failed: {tool_result['error']}")
+                            if not tool_result.get("success", True):
+                                st.error(f"❌ Tool '{tool_result['tool']}' failed: {tool_result.get('error', 'Unknown error')}")
                             else:
                                 st.success(f"✅ Tool '{tool_result['tool']}' executed successfully")
                                 with st.expander(f"View {tool_result['tool']} results"):
-                                    st.json(tool_result["result"])
+                                    if "output" in tool_result:
+                                        st.json(tool_result["output"])
+                else:
+                    st.error(f"Error: {result['error']}")
+                
+                # Clean up temporary file
+                if temp_image_path and os.path.exists(temp_image_path):
+                    try:
+                        os.unlink(temp_image_path)
+                    except:
+                        pass
+                        
             else:
-                st.warning("Please enter a prompt before submitting.")
+                st.warning("Please enter a prompt or upload an image before submitting.")
+    
+    with tab3:
+        st.header("People Database")
+        st.write("View all people stored in the knowledge graph with their facts and properties.")
+        
+        if st.session_state.api_initialized:
+            # Database statistics at the top
+            try:
+                stats = st.session_state.tool_manager.get_graph_statistics()
+                st.info(stats)
+            except Exception as e:
+                st.error(f"Error loading statistics: {e}")
+            
+            # Refresh button
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                if st.button("🔄 Refresh", key="refresh_people"):
+                    st.rerun()
+            
+            # Get all people data
+            with st.spinner("Loading people data..."):
+                try:
+                    people_data_result = st.session_state.tool_manager.get_all_people(include_relationships=True)
+                    
+                    # Extract JSON from the result string
+                    if "People data: " in people_data_result:
+                        json_start = people_data_result.find('People data: ') + len('People data: ')
+                        json_data = people_data_result[json_start:]
+                        people_data = json.loads(json_data)
+                        
+                        if people_data:
+                            st.success(f"Found {len(people_data)} people in the database")
+                            
+                            # Display each person in an expander
+                            for idx, person in enumerate(people_data):
+                                person_name = person.get('name', 'Unknown')
+                                person_id = person.get('id', 'N/A')
+                                # Create unique key using index to avoid duplicates
+                                unique_key = f"{person_id}_{idx}" if person_id != 'N/A' else f"person_{idx}"
+                                
+                                with st.expander(f"👤 {person_name}", expanded=False):
+                                    # Person basic info
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        st.write(f"**ID:** {person_id}")
+                                    with col2:
+                                        st.write(f"**Name:** {person_name}")
+                                    
+                                    # Properties section
+                                    properties = person.get('properties', {})
+                                    if properties:
+                                        st.subheader("📋 Properties")
+                                        for key, value in properties.items():
+                                            if key != 'name':  # Skip name as it's already displayed
+                                                st.write(f"**{key.title()}:** {value}")
+                                    
+                                    # Facts section
+                                    facts = person.get('facts', [])
+                                    if facts:
+                                        st.subheader(f"📝 Facts ({len(facts)})")
+                                        for i, fact in enumerate(facts, 1):
+                                            fact_text = fact.get('text', 'No text')
+                                            fact_type = fact.get('type', 'general')
+                                            fact_id = fact.get('id', 'N/A')
+                                            
+                                            # Color code by fact type
+                                            type_colors = {
+                                                'work': '🔵',
+                                                'hobby': '🟢', 
+                                                'relationship': '❤️',
+                                                'volunteer': '🟡',
+                                                'general': '⚪'
+                                            }
+                                            
+                                            type_icon = type_colors.get(fact_type, '⚪')
+                                            
+                                            st.write(f"{type_icon} **{i}.** {fact_text}")
+                                            st.caption(f"Type: {fact_type} | ID: {fact_id}")
+                                            st.divider()
+                                    
+                                    # Relationships section
+                                    relationships = person.get('relationships', {})
+                                    if relationships:
+                                        st.subheader("🔗 Relationships")
+                                        
+                                        # Connected people
+                                        connected_people = relationships.get('connected_people', [])
+                                        if connected_people:
+                                            st.write("**👥 Connected People:**")
+                                            for connection in connected_people:
+                                                st.write(f"• {connection}")
+                                        
+                                        # Connected entities
+                                        connected_entities = relationships.get('connected_entities', [])
+                                        if connected_entities:
+                                            st.write("**🏢 Connected Entities:**")
+                                            for entity in connected_entities:
+                                                entity_name = entity.get('name', 'Unknown')
+                                                entity_type = entity.get('type', 'unknown')
+                                                st.write(f"• {entity_name} ({entity_type})")
+                                    
+                                    # Delete button at bottom
+                                    st.markdown("---")
+                                    if st.button(f"🗑️ DELETE PERSON", key=f"delete_{unique_key}", type="primary", 
+                                                use_container_width=True):
+                                        st.session_state[f"confirm_delete_{unique_key}"] = True
+                                    
+                                    # Delete confirmation
+                                    if st.session_state.get(f"confirm_delete_{unique_key}", False):
+                                        st.error(f"⚠️ Are you sure you want to delete {person_name}?")
+                                        col1, col2 = st.columns(2)
+                                        with col1:
+                                            if st.button(f"✅ Yes, Delete", key=f"confirm_yes_{unique_key}"):
+                                                # Use person_id for deletion, fallback to name if needed
+                                                if person_id != 'N/A':
+                                                    result = st.session_state.tool_manager.delete_person(person_id=person_id)
+                                                else:
+                                                    result = st.session_state.tool_manager.delete_person(name=person_name)
+                                                st.success(f"Person deleted: {result}")
+                                                st.session_state[f"confirm_delete_{unique_key}"] = False
+                                                st.rerun()
+                                        with col2:
+                                            if st.button(f"❌ Cancel", key=f"confirm_no_{unique_key}"):
+                                                st.session_state[f"confirm_delete_{unique_key}"] = False
+                                                st.rerun()
+                        else:
+                            st.info("No people found in the database")
+                            st.write("Use the Chat Mode or One-Shot Prompts to add people to the database.")
+                    
+                    else:
+                        st.error("Unable to parse people data")
+                        st.code(people_data_result)
+                        
+                except json.JSONDecodeError as e:
+                    st.error(f"Error parsing people data: {e}")
+                    st.code(people_data_result)
+                except Exception as e:
+                    st.error(f"Error loading people data: {e}")
+        
+        else:
+            st.warning("Please configure your API key first to view the people database.")
+    
+    with tab4:
+        st.header("Custom Chat Analysis")
+        st.write("Analyze your conversation with specific people from your database to get suggestions on how to communicate more effectively.")
+        
+        if st.session_state.api_initialized:
+            # Get list of people for dropdown
+            with st.spinner("Loading people list..."):
+                try:
+                    people_data_result = st.session_state.tool_manager.get_all_people(include_relationships=True)
+                    
+                    if "People data: " in people_data_result:
+                        json_start = people_data_result.find('People data: ') + len('People data: ')
+                        json_data = people_data_result[json_start:]
+                        people_data = json.loads(json_data)
+                        
+                        if people_data:
+                            # Create dropdown options
+                            people_options = ["Select a person..."] + [person.get('name', 'Unknown') for person in people_data]
+                            
+                            # Person selection dropdown
+                            selected_person = st.selectbox(
+                                "👤 Select person to analyze conversation with:",
+                                options=people_options,
+                                key="custom_chat_person"
+                            )
+                            
+                            if selected_person != "Select a person...":
+                                # Find the selected person's data
+                                person_data = next((p for p in people_data if p.get('name') == selected_person), None)
+                                
+                                if person_data:
+                                    # Show person info in an expander
+                                    with st.expander(f"ℹ️ About {selected_person}", expanded=False):
+                                        # Display person's facts for context
+                                        facts = person_data.get('facts', [])
+                                        if facts:
+                                            st.write("**Known facts about this person:**")
+                                            for i, fact in enumerate(facts, 1):
+                                                fact_text = fact.get('text', 'No text')
+                                                fact_type = fact.get('type', 'general')
+                                                
+                                                # Color code by fact type
+                                                type_colors = {
+                                                    'work': '🔵',
+                                                    'hobby': '🟢', 
+                                                    'relationship': '❤️',
+                                                    'volunteer': '🟡',
+                                                    'general': '⚪'
+                                                }
+                                                type_icon = type_colors.get(fact_type, '⚪')
+                                                
+                                                st.write(f"{type_icon} {fact_text}")
+                                        else:
+                                            st.write("No facts available for this person.")
+                                    
+                                    st.markdown("---")
+                                    
+                                    # Input fields for conversation analysis
+                                    st.subheader("📝 Conversation Analysis")
+                                    
+                                    # Previous conversation context
+                                    previous_conversation = st.text_area(
+                                        "📜 Previous conversation context:",
+                                        height=150,
+                                        placeholder="Paste the previous conversation or context here...",
+                                        help="Include any relevant conversation history to provide context for the analysis.",
+                                        key="previous_conversation"
+                                    )
+                                    
+                                    # Your next message
+                                    your_message = st.text_area(
+                                        "💬 Your next message:",
+                                        height=100,
+                                        placeholder="Type the message you want to send...",
+                                        help="Enter the message you're planning to send and get suggestions for improvement.",
+                                        key="your_message"
+                                    )
+                                    
+                                    # Analyze button
+                                    if st.button("🔍 Analyze", key="analyze_conversation", type="primary", use_container_width=True):
+                                        if your_message.strip():
+                                            # Create analysis prompt
+                                            person_facts = "\n".join([f"- {fact.get('text', '')}" for fact in facts])
+
+                                            if not person_facts :
+                                                person_facts =  "No specific information available."
+
+                                            if not previous_conversation.strip() :
+                                                previous_conversation = "No previous context provided."
+                                           
+                                            analysis_prompt = st.session_state.prompt_manager.get_prompt('message_analysis', {
+                                                'selected_person' : selected_person,
+                                                'person_facts' : person_facts,
+                                                'previous_conversation' : previous_conversation,
+                                                'message' : your_message
+                                            })
+                                            
+                                            # Call the Gemma model for analysis
+                                            with st.spinner(f"Analyzing your message for {selected_person}..."):
+                                                try:
+                                                    # Use the text model directly for this analysis
+                                                    result = st.session_state.gemma_chat.call_simple(
+                                                        analysis_prompt,
+                                                        system_prompt="You are a helpful communication expert who provides thoughtful, constructive feedback on interpersonal communications."
+                                                    )
+                                                    
+                                                    if result["success"]:
+                                                        st.subheader("🎯 Analysis Results")
+                                                        
+                                                        # Display the analysis in a nice format
+                                                        st.json(result)
+                                                        
+                                                    else:
+                                                        st.error(f"Analysis failed: {result['error']}")
+                                                        
+                                                except Exception as e:
+                                                    st.error(f"Error during analysis: {str(e)}")
+                                        else:
+                                            st.warning("Please enter a message to analyze.")
+                                
+                                else:
+                                    st.error("Could not find data for the selected person.")
+                            
+                            else:
+                                st.info("👆 Please select a person from the dropdown to begin conversation analysis.")
+                        
+                        else:
+                            st.warning("No people found in the database.")
+                            st.write("Add some people using the Chat Mode or One-Shot Prompts first.")
+                    
+                    else:
+                        st.error("Unable to load people data.")
+                        
+                except json.JSONDecodeError as e:
+                    st.error(f"Error parsing people data: {e}")
+                except Exception as e:
+                    st.error(f"Error loading people data: {e}")
+        
+        else:
+            st.warning("Please configure your API key first to use Custom Chat Analysis.")
 
 if __name__ == "__main__":
     main()
