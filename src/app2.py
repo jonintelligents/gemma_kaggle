@@ -619,7 +619,7 @@ def main():
                                                         st.subheader("🎯 Analysis Results")
                                                         
                                                         # Display the analysis in a nice format
-                                                        st.json(result['response'])
+                                                        st.json(result)
                                                         
                                                     else:
                                                         st.error(f"Analysis failed: {result['error']}")
