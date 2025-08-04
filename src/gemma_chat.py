@@ -170,6 +170,18 @@ class GemmaChat:
         else:
             return full_context
     
+    def _extract_json_from_codeblock(self, llm_content):
+        parts = llm_content.split("```")
+        if len(parts) >= 3:
+            # Take the middle part (index 1)
+            json_part = parts[1]
+            # Remove language identifier if present (first line)
+            lines = json_part.split('\n', 1)
+            if len(lines) > 1 and lines[0].strip().lower() in ['json', 'javascript', 'js', '']:
+                return lines[1].strip()
+            return json_part.strip()
+        return llm_content
+
     def _make_api_call(self, contents: Any, has_image: bool = False, max_retries: int = 3) -> Dict[str, Any]:
         """Make the actual API call with retry logic."""
         # Select appropriate model based on whether image is included
@@ -187,10 +199,12 @@ class GemmaChat:
                 
                 llm_content = response.text.strip()
                 
-                # Clean up JSON markdown formatting
-                if llm_content.startswith("```json") and llm_content.endswith("```"):
-                    llm_content = llm_content[7:-3].strip()
-                
+                # # Clean up JSON markdown formatting
+                # if llm_content.startswith("```json") and llm_content.endswith("```"):
+                #     llm_content = llm_content[7:-3].strip()
+
+                llm_content = self._extract_json_from_codeblock(llm_content)
+
                 # Try to parse as JSON first (for tool calls)
                 try:
                     parsed = json.loads(llm_content)
@@ -249,6 +263,8 @@ class GemmaChat:
         # Make API call
         result = self._make_api_call(contents, has_image=bool(image_path), max_retries=max_retries)
         
+        print(result)
+
         if not result["success"]:
             return result
         
