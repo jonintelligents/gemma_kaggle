@@ -27,6 +27,21 @@ st.set_page_config(
     layout="wide"
 )
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Convert to os.getenv calls
+NEO4J_URI = os.getenv('NEO4J_URI', 'bolt://localhost:7687')  # fallback to local
+NEO4J_USERNAME = os.getenv('NEO4J_USERNAME', 'neo4j')
+NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD')  # No default - should be set
+NEO4J_DATABASE = os.getenv('NEO4J_DATABASE', 'neo4j')
+AURA_INSTANCEID = os.getenv('AURA_INSTANCEID')
+AURA_INSTANCENAME = os.getenv('AURA_INSTANCENAME')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+
+
 # Initialize session state
 def initialize_session_state():
     """Initialize all session state variables."""
@@ -87,8 +102,9 @@ def initialize_managers_and_chat(api_key):
         
         # Initialize managers
         prompt_manager = PromptManager()
-        tool_manager = GraphPersonManager()  # or ExamplePersonToolManager()
-        
+        #tool_manager = GraphPersonManager()  # or ExamplePersonToolManager()
+        tool_manager = GraphPersonManager(uri=NEO4J_URI, user=NEO4J_USERNAME, password=NEO4J_PASSWORD)
+
         # Setup unified system prompt for both text and images
         unified_system_prompt = prompt_manager.get_prompt("system", {
             "tool_function_descriptions": tool_manager.get_available_tools_detailed()
@@ -166,7 +182,7 @@ def get_default_prompt_for_image():
     return "Extract the information about this person from the image and store them"
 
 def main():
-    st.title("🤖 LLM Tool Demo with GemmaChat")
+    st.title("🤖 Personal Relationship Assistant & Manager")
     
     if not MODULES_AVAILABLE:
         st.stop()
@@ -175,8 +191,8 @@ def main():
     
     # Sidebar for application info and tools
     with st.sidebar:
-        st.header("📋 Application Info")
-        st.write("**LLM Tool Demo** - Interactive chat interface with automated tool execution for person information management.")
+        st.header("📋 PRAaM")
+        st.write("**Gemma3n Demo** - Interactive chat interface with automated tool execution for person information management.")
         
         # Check for API key in environment first
         api_key = os.getenv('GEMINI_API_KEY')
