@@ -53,6 +53,19 @@ python -m streamlit run app.py
 
 The application will be available at: http://localhost:8501
 
+## OFFLINE RUNNING IN AN AIRGAPPED ENVIRONMENT
+
+The application uses ollama.  Start up the ollama server with the gemma3n model.  This will run locally without internet if the model is already on the machine.
+
+> ollama run gemma3n:e4b  
+
+Start up and run neo4j as normal
+
+```bash
+python -m streamlit run app_local_ollama.py
+```
+
+
 ## Useful Cypher Queries
 
 Here are some basic Cypher queries for database management:
