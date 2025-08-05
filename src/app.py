@@ -102,8 +102,8 @@ def initialize_managers_and_chat(api_key):
         
         # Initialize managers
         prompt_manager = PromptManager()
-        #tool_manager = GraphPersonManager()  # or ExamplePersonToolManager()
-        tool_manager = GraphPersonManager(uri=NEO4J_URI, user=NEO4J_USERNAME, password=NEO4J_PASSWORD)
+        tool_manager = GraphPersonManager()  # or ExamplePersonToolManager()
+        #tool_manager = GraphPersonManager(uri=NEO4J_URI, user=NEO4J_USERNAME, password=NEO4J_PASSWORD)
 
         # Setup unified system prompt for both text and images
         unified_system_prompt = prompt_manager.get_prompt("system", {
@@ -646,7 +646,7 @@ def main():
                                                         st.subheader("🎯 Analysis Results")
                                                         
                                                         # Display the analysis in a nice format
-                                                        st.json(result['response'])
+                                                        st.json(result)
                                                         
                                                     else:
                                                         st.error(f"Analysis failed: {result['error']}")
