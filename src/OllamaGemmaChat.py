@@ -135,15 +135,23 @@ class OllamaGemmaChat:
         # Add conversation history if requested
         if include_history and self.chat_history:
             for message in self.chat_history:
+                # Ensure content is always a string
+                content = message["content"]
+                if isinstance(content, dict):
+                    # If content is a dict, extract the text or convert to string
+                    content = content.get("text", str(content))
+                elif not isinstance(content, str):
+                    content = str(content)
+                
                 messages.append({
                     "role": message["role"],
-                    "content": message["content"]
+                    "content": content
                 })
         
         # Prepare user message
         user_message = {
             "role": "user",
-            "content": prompt
+            "content": str(prompt)  # Ensure prompt is always a string
         }
         
         # Add image if provided
@@ -260,7 +268,7 @@ class OllamaGemmaChat:
             return result
         
         # Add to history
-        self.chat_history.append({"role": "user", "content": prompt})
+        self.chat_history.append({"role": "user", "content": str(prompt)})
         
         if result["type"] == "json":
             parsed = result["content"]
@@ -269,7 +277,7 @@ class OllamaGemmaChat:
             
             if not tool_calls:
                 # No tools, just regular response
-                self.chat_history.append({"role": "assistant", "content": response_text})
+                self.chat_history.append({"role": "assistant", "content": str(response_text)})
                 return {
                     "success": True,
                     "type": "text_response",
@@ -312,10 +320,11 @@ class OllamaGemmaChat:
                                 "output": tool_output
                             })
                             
-                            # Add to chat history
+                            # Add to chat history - ensure content is string
+                            tool_result_text = f"Executed tool '{tool['name']}' with result: {tool_output}"
                             self.chat_history.append({
                                 "role": "assistant",
-                                "content": f"Executed tool '{tool['name']}' with result: {tool_output}"
+                                "content": str(tool_result_text)
                             })
                             
                         except Exception as e:
@@ -329,7 +338,7 @@ class OllamaGemmaChat:
                 return result_data
         else:
             # Text response
-            self.chat_history.append({"role": "assistant", "content": result["content"]})
+            self.chat_history.append({"role": "assistant", "content": str(result["content"])})
             return {
                 "success": True,
                 "type": "text_response",
@@ -368,8 +377,8 @@ class OllamaGemmaChat:
         
         # Add to history if including history
         if include_history:
-            self.chat_history.append({"role": "user", "content": prompt})
-            self.chat_history.append({"role": "assistant", "content": result["content"]})
+            self.chat_history.append({"role": "user", "content": str(prompt)})
+            self.chat_history.append({"role": "assistant", "content": str(result["content"])})
         
         return {
             "success": True,
@@ -513,10 +522,11 @@ class OllamaGemmaChat:
                     "output": tool_output
                 })
                 
-                # Add to chat history
+                # Add to chat history - ensure content is string
+                tool_result_text = f"Executed tool '{tool['name']}' with result: {tool_output}"
                 self.chat_history.append({
                     "role": "assistant",
-                    "content": f"Executed tool '{tool['name']}' with result: {tool_output}"
+                    "content": str(tool_result_text)
                 })
                 
             except Exception as e:
