@@ -123,11 +123,3 @@ To remove the container (data will persist in volumes):
 ```bash
 docker rm neo4j
 ```
-
-## Environment Configuration
-
-For production use, consider:
-- Changing the default Neo4j password
-- Using environment variables for configuration
-- Setting up proper data backup procedures
-- Configuring appropriate memory limits for Neo4j
