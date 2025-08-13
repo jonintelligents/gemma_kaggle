@@ -1,3 +1,5 @@
+https://youtu.be/EJ0T6OqkMdA?si=zCYylw6SAlO2Ai8e
+
 # Project Setup Guide
 
 ## Prerequisites
